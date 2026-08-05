@@ -12,3 +12,4 @@ config.toml
 *.p12
 secrets.*
 **/credentials*
+demo/
