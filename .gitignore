@@ -1,0 +1,14 @@
+/target
+.DS_Store
+
+# Nunca versionar credencial: o config real do app vive em
+# ~/Library/Application Support/sh.harness.harness/config.toml (fora do repo).
+# Estas regras existem para o caso de alguém copiar um para cá.
+config.toml
+.env
+.env.*
+*.pem
+*.key
+*.p12
+secrets.*
+**/credentials*

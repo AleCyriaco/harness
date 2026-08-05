@@ -1,0 +1,42 @@
+[package]
+name = "harness"
+version = "0.5.0"
+edition = "2021"
+description = "Harness — lightweight multiplatform desktop AI for code, docs, sheets, and PDFs"
+license = "MIT"
+authors = ["Ale"]
+readme = "README.md"
+
+[dependencies]
+anyhow = "1"
+calamine = "0.26"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+directories = "6"
+docx-rs = "0.4"
+eframe = { version = "0.31", default-features = true, features = ["default_fonts", "wgpu"] }
+egui = "0.31"
+printpdf = "0.7"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "blocking"] }
+rfd = "0.15"
+rusqlite = { version = "0.32", features = ["bundled"] }
+rust_xlsxwriter = "0.79"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+uuid = { version = "1", features = ["v4"] }
+zip = { version = "2", default-features = false, features = ["deflate"] }
+# Internal webview (WKWebView / WebView2 / WebKitGTK) — not system Chrome/Safari
+wry = "0.48"
+tao = "0.30"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
+opt-level = 3
+
+[profile.dev]
+opt-level = 1

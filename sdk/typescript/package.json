@@ -1,0 +1,12 @@
+{
+  "name": "@harness/sdk",
+  "version": "0.4.0",
+  "description": "Minimal TypeScript client for harness daemon (NDJSON TCP/unix via net)",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p ."
+  },
+  "license": "MIT"
+}

@@ -1,0 +1,367 @@
+//! Primitivas visuais do redesign: rail, chips, chevrons, pontos de estado.
+//!
+//! Tudo desenhado com o painter (nada de glifos exóticos que faltam na fonte).
+
+use eframe::egui::{
+    self, Align2, Color32, CornerRadius, FontId, Pos2, Rect, Response, Sense, Stroke, StrokeKind,
+    Vec2,
+};
+
+use crate::theme::pal;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Glyph {
+    Square,
+    Circle,
+    Diamond,
+    Bar,
+    Globe,
+    /// três nós ligados — grafo estrutural
+    Nodes,
+    /// pulso — painel de uso
+    Pulse,
+}
+
+fn paint_glyph(painter: &egui::Painter, center: Pos2, g: Glyph, filled: bool, color: Color32) {
+    let s = 11.0_f32;
+    let half = s * 0.5;
+    let rect = Rect::from_center_size(center, Vec2::splat(s));
+    let stroke = Stroke::new(1.5, color);
+    match g {
+        Glyph::Square => {
+            if filled {
+                painter.rect_filled(rect, CornerRadius::same(3), color);
+            } else {
+                painter.rect_stroke(rect, CornerRadius::same(3), stroke, StrokeKind::Inside);
+            }
+        }
+        Glyph::Circle => {
+            if filled {
+                painter.circle_filled(center, half, color);
+            } else {
+                painter.circle_stroke(center, half - 0.75, stroke);
+            }
+        }
+        Glyph::Diamond => {
+            let pts = vec![
+                Pos2::new(center.x, center.y - half),
+                Pos2::new(center.x + half, center.y),
+                Pos2::new(center.x, center.y + half),
+                Pos2::new(center.x - half, center.y),
+            ];
+            if filled {
+                painter.add(egui::Shape::convex_polygon(pts, color, Stroke::NONE));
+            } else {
+                painter.add(egui::Shape::closed_line(pts, stroke));
+            }
+        }
+        Glyph::Bar => {
+            let r = Rect::from_center_size(center, Vec2::new(s, 2.0));
+            painter.rect_filled(r, CornerRadius::same(1), color);
+        }
+        Glyph::Nodes => {
+            let r = 2.0;
+            let a = Pos2::new(center.x - half + r, center.y + half - r);
+            let b = Pos2::new(center.x + half - r, center.y + half - r);
+            let top = Pos2::new(center.x, center.y - half + r);
+            let thin = Stroke::new(1.2, color);
+            painter.line_segment([a, top], thin);
+            painter.line_segment([b, top], thin);
+            painter.line_segment([a, b], thin);
+            for p in [a, b, top] {
+                if filled {
+                    painter.circle_filled(p, r, color);
+                } else {
+                    painter.circle_stroke(p, r - 0.4, thin);
+                }
+            }
+        }
+        Glyph::Pulse => {
+            let thin = Stroke::new(1.4, color);
+            let y = center.y;
+            let pts = vec![
+                Pos2::new(center.x - half, y),
+                Pos2::new(center.x - half * 0.45, y),
+                Pos2::new(center.x - half * 0.2, y - half * 0.85),
+                Pos2::new(center.x + half * 0.1, y + half * 0.7),
+                Pos2::new(center.x + half * 0.4, y),
+                Pos2::new(center.x + half, y),
+            ];
+            painter.add(egui::Shape::line(pts, thin));
+        }
+        Glyph::Globe => {
+            painter.circle_stroke(center, half - 0.75, stroke);
+            painter.line_segment(
+                [
+                    Pos2::new(center.x - half + 0.75, center.y),
+                    Pos2::new(center.x + half - 0.75, center.y),
+                ],
+                stroke,
+            );
+            painter.add(egui::Shape::closed_line(
+                vec![
+                    Pos2::new(center.x, center.y - half + 0.75),
+                    Pos2::new(center.x + half * 0.55, center.y),
+                    Pos2::new(center.x, center.y + half - 0.75),
+                    Pos2::new(center.x - half * 0.55, center.y),
+                ],
+                stroke,
+            ));
+        }
+    }
+}
+
+/// Item do rail: 48×44, forma 11px + rótulo mono 8.5.
+pub fn rail_item(
+    ui: &mut egui::Ui,
+    glyph: Glyph,
+    label: &str,
+    active: bool,
+    dot: bool,
+) -> Response {
+    let p = pal();
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(48.0, 44.0), Sense::click());
+    let painter = ui.painter();
+    if active {
+        painter.rect_filled(rect, CornerRadius::same(9), p.card);
+        painter.rect_stroke(
+            rect,
+            CornerRadius::same(9),
+            Stroke::new(1.0, p.border),
+            StrokeKind::Inside,
+        );
+    } else if response.hovered() {
+        painter.rect_filled(rect, CornerRadius::same(9), p.raised);
+    }
+
+    let fg = if active { p.text } else { p.muted };
+    let shape_color = if active { p.accent } else { p.muted };
+    paint_glyph(
+        painter,
+        Pos2::new(rect.center().x, rect.top() + 14.0),
+        glyph,
+        active,
+        shape_color,
+    );
+    painter.text(
+        Pos2::new(rect.center().x, rect.bottom() - 11.0),
+        Align2::CENTER_CENTER,
+        label,
+        FontId::monospace(8.5),
+        fg,
+    );
+    if dot {
+        painter.circle_filled(
+            Pos2::new(rect.right() - 7.0, rect.top() + 6.0),
+            3.0,
+            p.accent,
+        );
+    }
+    response
+}
+
+/// Ponto de estado 5–6px alinhado ao texto.
+pub fn dot(ui: &mut egui::Ui, color: Color32, radius: f32) {
+    let (rect, _) = ui.allocate_exact_size(Vec2::splat(radius * 2.0 + 2.0), Sense::hover());
+    ui.painter().circle_filled(rect.center(), radius, color);
+}
+
+/// Chevron ▸ / ▾ desenhado (sem depender de glifo).
+pub fn chevron(ui: &mut egui::Ui, open: bool, color: Color32) {
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(10.0, 12.0), Sense::hover());
+    let c = rect.center();
+    let pts = if open {
+        vec![
+            Pos2::new(c.x - 4.0, c.y - 2.0),
+            Pos2::new(c.x + 4.0, c.y - 2.0),
+            Pos2::new(c.x, c.y + 3.0),
+        ]
+    } else {
+        vec![
+            Pos2::new(c.x - 2.0, c.y - 4.0),
+            Pos2::new(c.x + 3.0, c.y),
+            Pos2::new(c.x - 2.0, c.y + 4.0),
+        ]
+    };
+    ui.painter()
+        .add(egui::Shape::convex_polygon(pts, color, Stroke::NONE));
+}
+
+/// Chip com borda (composer, filtros).
+pub fn chip(ui: &mut egui::Ui, text: &str) -> Response {
+    let p = pal();
+    ui.add(
+        egui::Button::new(
+            egui::RichText::new(text)
+                .monospace()
+                .size(11.5)
+                .color(p.text_dim),
+        )
+        .fill(Color32::TRANSPARENT)
+        .stroke(Stroke::new(1.0, p.border_soft))
+        .corner_radius(CornerRadius::same(7))
+        .min_size(Vec2::new(0.0, 24.0)),
+    )
+}
+
+/// Botão terracota principal (Enviar, Salvar).
+pub fn primary_button(ui: &mut egui::Ui, text: &str, enabled: bool) -> Response {
+    let p = pal();
+    ui.add_enabled(
+        enabled,
+        egui::Button::new(
+            crate::theme::ui_medium(text, 12.5).color(if p.bg.r() > 128 {
+                Color32::WHITE
+            } else {
+                p.bg
+            }),
+        )
+        .fill(p.accent)
+        .stroke(Stroke::NONE)
+        .corner_radius(CornerRadius::same(8))
+        .min_size(Vec2::new(76.0, 30.0)),
+    )
+}
+
+/// Botão de ação destrutiva (apagar).
+pub fn danger_button(ui: &mut egui::Ui, text: &str) -> Response {
+    let p = pal();
+    ui.add(
+        egui::Button::new(crate::theme::ui_medium(text, 12.5).color(Color32::WHITE))
+            .fill(p.error)
+            .stroke(Stroke::NONE)
+            .corner_radius(CornerRadius::same(8))
+            .min_size(Vec2::new(76.0, 30.0)),
+    )
+}
+
+/// Toggle segmentado (Code / Office, Preview / Side).
+pub fn segmented(ui: &mut egui::Ui, options: &[&str], selected: usize) -> Option<usize> {
+    let p = pal();
+    let mut clicked = None;
+    egui::Frame::new()
+        .fill(p.raised)
+        .stroke(Stroke::new(1.0, p.border))
+        .corner_radius(CornerRadius::same(8))
+        .inner_margin(egui::Margin::same(2))
+        .show(ui, |ui| {
+            ui.spacing_mut().item_spacing.x = 2.0;
+            // `horizontal` herda a direção do pai; num layout right_to_left as
+            // opções sairiam invertidas, então percorremos ao contrário.
+            let rtl = ui.layout().main_dir == egui::Direction::RightToLeft;
+            ui.horizontal(|ui| {
+                let order: Vec<usize> = if rtl {
+                    (0..options.len()).rev().collect()
+                } else {
+                    (0..options.len()).collect()
+                };
+                for i in order {
+                    let opt = &options[i];
+                    let on = i == selected;
+                    let btn = egui::Button::new(if on {
+                        crate::theme::ui_medium(*opt, 11.5).color(p.text)
+                    } else {
+                        egui::RichText::new(*opt).size(11.5).color(p.muted)
+                    })
+                    .fill(if on { p.card } else { Color32::TRANSPARENT })
+                    .stroke(Stroke::NONE)
+                    .corner_radius(CornerRadius::same(6))
+                    .min_size(Vec2::new(0.0, 22.0));
+                    if ui.add(btn).clicked() {
+                        clicked = Some(i);
+                    }
+                }
+            });
+        });
+    clicked
+}
+
+/// Gráfico de linha de uma série, com área discreta e escala automática.
+/// Uma série por gráfico: escalas separadas impedem que a curva menor
+/// vire uma linha reta colada no chão.
+pub fn spark_chart(ui: &mut egui::Ui, height: f32, series: &[f32], color: Color32) {
+    let p = pal();
+    let w = ui.available_width();
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(w, height), Sense::hover());
+    let painter = ui.painter();
+    painter.rect_filled(rect, CornerRadius::same(8), p.raised);
+    if series.len() < 2 {
+        return;
+    }
+
+    let peak = series.iter().copied().fold(0.0_f32, f32::max).max(1.0);
+    let pad = 4.0;
+    let inner = Rect::from_min_max(
+        Pos2::new(rect.left() + pad, rect.top() + pad),
+        Pos2::new(rect.right() - pad, rect.bottom() - pad),
+    );
+    let base = inner.bottom();
+    let step = inner.width() / (series.len() - 1) as f32;
+    let pts: Vec<Pos2> = series
+        .iter()
+        .enumerate()
+        .map(|(i, v)| {
+            let x = inner.left() + i as f32 * step;
+            let y = base - (v / peak).clamp(0.0, 1.0) * inner.height();
+            Pos2::new(x, y)
+        })
+        .collect();
+
+    // Área por trapézios: um polígono só seria côncavo e o `convex_polygon`
+    // do egui devolveria cunhas atravessando o gráfico.
+    let soft = color.gamma_multiply(0.16);
+    for pair in pts.windows(2) {
+        painter.add(egui::Shape::convex_polygon(
+            vec![
+                pair[0],
+                pair[1],
+                Pos2::new(pair[1].x, base),
+                Pos2::new(pair[0].x, base),
+            ],
+            soft,
+            Stroke::NONE,
+        ));
+    }
+    let tip = pts.last().copied();
+    painter.add(egui::Shape::line(pts, Stroke::new(1.6, color)));
+    // ponta viva
+    if let Some(last) = tip {
+        painter.circle_filled(last, 2.0, color);
+    }
+}
+
+/// Barra proporcional de duas partes (entrada/saída, hit/miss).
+pub fn split_bar(ui: &mut egui::Ui, frac_a: f32, color_a: Color32, color_b: Color32) {
+    let w = ui.available_width();
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(w, 6.0), Sense::hover());
+    let painter = ui.painter();
+    painter.rect_filled(rect, CornerRadius::same(3), color_b);
+    let cut = rect.width() * frac_a.clamp(0.0, 1.0);
+    let a = Rect::from_min_size(rect.min, Vec2::new(cut, rect.height()));
+    painter.rect_filled(a, CornerRadius::same(3), color_a);
+}
+
+/// Linha de 1px na cor `border_soft` (separador dentro de cards).
+pub fn hairline(ui: &mut egui::Ui) {
+    let w = ui.available_width();
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(w, 1.0), Sense::hover());
+    ui.painter().rect_filled(rect, 0, pal().border_soft);
+}
+
+/// Barra indeterminada de 2px (tool call rodando).
+pub fn indeterminate_bar(ui: &mut egui::Ui, time: f64) {
+    let p = pal();
+    let w = ui.available_width();
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(w, 2.0), Sense::hover());
+    ui.painter().rect_filled(rect, 0, p.border_soft);
+    let frac = 0.32_f32;
+    let travel = (1.0 - frac) * rect.width();
+    // vai-e-volta suave sem depender de easing externo
+    let t = ((time * 0.6).sin() * 0.5 + 0.5) as f32;
+    let x = rect.left() + travel * t;
+    let bar = Rect::from_min_size(
+        Pos2::new(x, rect.top()),
+        Vec2::new(rect.width() * frac, 2.0),
+    );
+    ui.painter().rect_filled(bar, 0, p.accent);
+}
