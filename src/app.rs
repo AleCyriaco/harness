@@ -326,6 +326,7 @@ enum CmdAction {
     DeleteCurrent,
     ToggleUsage,
     PinUsage,
+    Project,
 }
 
 pub struct HarnessApp {
@@ -1064,13 +1065,14 @@ impl HarnessApp {
             self.swarm_snap = crate::swarm::SwarmSnapshot::default();
             return;
         };
-        if let Ok((swarm, metrics, graph)) = client.runtime_info() {
+        if let Ok((swarm, metrics)) = client.runtime_info() {
             self.meter
                 .absorb_totals(metrics.prompt_tokens, metrics.completion_tokens);
             self.swarm_snap = swarm;
             self.metrics = metrics;
-            self.graph_stats = graph;
         }
+        // O grafo é por sessão (projeto apontado), então quem lê é a GUI.
+        self.graph_stats = crate::graph::stats(&self.project_root(), false).unwrap_or_default();
     }
 
     /// Abre a confirmação de apagar (nunca apaga direto — é irreversível).
@@ -1199,6 +1201,47 @@ impl HarnessApp {
         }
     }
 
+    /// Onde o agente deste chat trabalha. Mesma regra do daemon.
+    fn project_root(&self) -> PathBuf {
+        session::effective_root(
+            self.session.meta.project_dir.as_deref(),
+            &self.session.meta.chat_dir,
+        )
+    }
+
+    /// Abre o seletor e aponta o chat para a pasta escolhida.
+    fn pick_project_dir(&mut self) {
+        let start = self
+            .session
+            .meta
+            .project_dir
+            .clone()
+            .unwrap_or_else(|| self.cfg.workspace.display().to_string());
+        if let Some(dir) = rfd::FileDialog::new()
+            .set_title("Project folder this chat works on")
+            .set_directory(&start)
+            .pick_folder()
+        {
+            let id = self.active_session_key();
+            let path = dir.display().to_string();
+            self.update_session_meta(&id, None, None, Some(Some(path.clone())));
+            self.status = format!("project: {path}");
+            self.messages.push(UiMessage {
+                role: "system".into(),
+                text: format!(
+                    "This chat now works on {path}\nWrites there ask for approval; \
+                     reads and search are free."
+                ),
+            });
+        }
+    }
+
+    fn clear_project_dir(&mut self) {
+        let id = self.active_session_key();
+        self.update_session_meta(&id, None, None, Some(None));
+        self.status = "project cleared".into();
+    }
+
     /// Id que o daemon reconhece para o chat aberto.
     fn active_session_key(&self) -> String {
         if self.session.meta.daemon_session_id.is_empty() {
@@ -1210,13 +1253,21 @@ impl HarnessApp {
 
     /// Renomeia/fixa passando pelo daemon — a sessão viva tem a própria cópia
     /// do título, então mexer só no disco seria sobrescrito no próximo save.
-    fn update_session_meta(&mut self, id: &str, title: Option<&str>, pinned: Option<bool>) {
+    fn update_session_meta(
+        &mut self,
+        id: &str,
+        title: Option<&str>,
+        pinned: Option<bool>,
+        project_dir: Option<Option<String>>,
+    ) {
         let mut ok = false;
         if let Some(client) = &self.daemon {
-            ok = client.update_session(id, title, pinned).is_ok();
+            ok = client
+                .update_session(id, title, pinned, project_dir.clone())
+                .is_ok();
         }
         if !ok {
-            let _ = session::update_meta(id, title, pinned);
+            let _ = session::update_meta(id, title, pinned, project_dir.clone());
         }
         // reflete no chat aberto sem esperar o refresh
         if self.session.meta.id == id || self.session.meta.daemon_session_id == id {
@@ -1229,6 +1280,9 @@ impl HarnessApp {
             }
             if let Some(p) = pinned {
                 self.session.meta.pinned = p;
+            }
+            if let Some(p) = project_dir {
+                self.session.meta.project_dir = p.filter(|v| !v.trim().is_empty());
             }
         }
         self.session_list = session::list_sessions().unwrap_or_default();
@@ -2027,7 +2081,7 @@ impl HarnessApp {
             }
             SlashAction::Rename(t) => {
                 let id = self.active_session_key();
-                self.update_session_meta(&id, Some(&t), None);
+                self.update_session_meta(&id, Some(&t), None, None);
                 self.messages.push(UiMessage {
                     role: "system".into(),
                     text: format!("chat renamed: {t}"),
@@ -2036,7 +2090,7 @@ impl HarnessApp {
             SlashAction::Pin(v) => {
                 let id = self.active_session_key();
                 let now = v.unwrap_or(!self.session.meta.pinned);
-                self.update_session_meta(&id, None, Some(now));
+                self.update_session_meta(&id, None, Some(now), None);
                 self.messages.push(UiMessage {
                     role: "system".into(),
                     text: if now {
@@ -2047,6 +2101,23 @@ impl HarnessApp {
                 });
             }
             SlashAction::ToggleUsage => self.show_usage = !self.show_usage,
+            SlashAction::Project(arg) => {
+                let a = arg.trim();
+                if a.is_empty() {
+                    self.pick_project_dir();
+                } else if a == "off" || a == "none" {
+                    self.clear_project_dir();
+                } else if !std::path::Path::new(a).is_absolute() {
+                    self.push_error("project path must be absolute".into());
+                } else {
+                    let id = self.active_session_key();
+                    self.update_session_meta(&id, None, None, Some(Some(a.to_string())));
+                    self.messages.push(UiMessage {
+                        role: "system".into(),
+                        text: format!("This chat now works on {a}"),
+                    });
+                }
+            }
             SlashAction::Delete => {
                 let id = self.active_session_key();
                 self.ask_delete(&id);
@@ -2919,7 +2990,7 @@ impl HarnessApp {
                 if commit_rename {
                     if let Some(id) = self.rename_id.take() {
                         let t = self.rename_buf.clone();
-                        self.update_session_meta(&id, Some(&t), None);
+                        self.update_session_meta(&id, Some(&t), None, None);
                     }
                     self.rename_buf.clear();
                 }
@@ -2941,7 +3012,7 @@ impl HarnessApp {
                             self.rename_id = None;
                             self.rename_buf.clear();
                         }
-                        RowAction::Pin(v) => self.update_session_meta(&key, None, Some(v)),
+                        RowAction::Pin(v) => self.update_session_meta(&key, None, Some(v), None),
                         RowAction::OpenFolder => {
                             let path = PathBuf::from(&key);
                             if path.is_dir() {
@@ -3139,6 +3210,49 @@ impl HarnessApp {
                             .clicked()
                         {
                             self.ctx_panel = !self.ctx_panel;
+                        }
+                        ui.add_space(6.0);
+                        let proj = self.session.meta.project_dir.clone();
+                        let label = match &proj {
+                            Some(d) => format!(
+                                "▣ {}",
+                                std::path::Path::new(d)
+                                    .file_name()
+                                    .map(|s| s.to_string_lossy().to_string())
+                                    .unwrap_or_else(|| d.clone())
+                            ),
+                            None => "▣ project".to_string(),
+                        };
+                        let chip = ui.add(
+                            egui::Button::new(
+                                crate::theme::mono_medium(label, 11.5).color(if proj.is_some() {
+                                    p.accent
+                                } else {
+                                    p.muted
+                                }),
+                            )
+                            .fill(egui::Color32::TRANSPARENT)
+                            .stroke(egui::Stroke::new(
+                                1.0,
+                                if proj.is_some() { p.accent } else { p.border_soft },
+                            ))
+                            .corner_radius(egui::CornerRadius::same(7))
+                            .min_size(egui::vec2(0.0, 24.0)),
+                        );
+                        let chip = match &proj {
+                            Some(d) => chip.on_hover_text(format!(
+                                "{d}\nThis chat reads and edits here. Right-click to clear."
+                            )),
+                            None => chip.on_hover_text(
+                                "Point this chat at a project folder. Without one the agent \
+                                 is confined to the chat folder.",
+                            ),
+                        };
+                        if chip.clicked() {
+                            self.pick_project_dir();
+                        }
+                        if chip.secondary_clicked() && proj.is_some() {
+                            self.clear_project_dir();
                         }
                         ui.add_space(6.0);
                         let sel = match self.mode {
@@ -4168,7 +4282,7 @@ impl HarnessApp {
     }
 
     fn run_graph_build(&mut self, full: bool) {
-        let root = self.cfg.workspace.clone();
+        let root = self.project_root();
         let t0 = std::time::Instant::now();
         match crate::graph::build(&root, !full) {
             Ok(st) => {
@@ -4185,7 +4299,7 @@ impl HarnessApp {
     }
 
     fn check_graph_stale(&mut self) {
-        let root = self.cfg.workspace.clone();
+        let root = self.project_root();
         if let Ok(st) = crate::graph::stats(&root, true) {
             self.graph_stats = st;
         }
@@ -4193,7 +4307,7 @@ impl HarnessApp {
 
     /// Raio de impacto do símbolo digitado na caixa de busca.
     fn run_graph_impact(&mut self) {
-        let root = self.cfg.workspace.clone();
+        let root = self.project_root();
         let q = self.graph_query.trim().to_string();
         match crate::graph::impact(&root, &q, 2) {
             Ok(res) => self.graph_answer = res.render(),
@@ -4202,7 +4316,7 @@ impl HarnessApp {
     }
 
     fn run_graph_query(&mut self) {
-        let root = self.cfg.workspace.clone();
+        let root = self.project_root();
         let q = self.graph_query.clone();
         match crate::graph::query(&root, &q, 12, self.cfg.tool_result_cap as u64) {
             Ok(res) => self.graph_answer = res.render(),
@@ -4636,6 +4750,18 @@ impl HarnessApp {
             CmdAction::PinCurrent,
         );
         push(
+            match &self.session.meta.project_dir {
+                Some(_) => "Chat: clear project folder".into(),
+                None => "Chat: set project folder…".into(),
+            },
+            self.session
+                .meta
+                .project_dir
+                .clone()
+                .unwrap_or_else(|| "/project".into()),
+            CmdAction::Project,
+        );
+        push(
             "Chat: delete…".into(),
             "asks for confirmation".into(),
             CmdAction::DeleteCurrent,
@@ -4799,7 +4925,14 @@ impl HarnessApp {
             CmdAction::PinCurrent => {
                 let id = self.active_session_key();
                 let now = !self.session.meta.pinned;
-                self.update_session_meta(&id, None, Some(now));
+                self.update_session_meta(&id, None, Some(now), None);
+            }
+            CmdAction::Project => {
+                if self.session.meta.project_dir.is_some() {
+                    self.clear_project_dir();
+                } else {
+                    self.pick_project_dir();
+                }
             }
             CmdAction::DeleteCurrent => {
                 let id = self.active_session_key();

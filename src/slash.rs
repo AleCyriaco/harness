@@ -32,6 +32,9 @@ pub enum SlashAction {
     Delete,
     /// Mostra/esconde o painel de uso.
     ToggleUsage,
+    /// Aponta o chat para uma pasta de projeto. Vazio = abre o seletor;
+    /// "off" desaponta.
+    Project(String),
     Compact,
     Status,
     Unknown(String),
@@ -79,6 +82,7 @@ pub fn parse(input: &str) -> SlashAction {
             SlashAction::Help("Usage: /rename <new title>".into())
         }
         "delete" | "apagar" | "excluir" => SlashAction::Delete,
+        "project" | "projeto" | "cwd" => SlashAction::Project(rest.to_string()),
         "pin" | "fixar" => SlashAction::Pin(match rest {
             "" => None,
             "off" | "no" | "nao" | "não" => Some(false),
@@ -165,6 +169,7 @@ pub fn help_text() -> String {
 /rename <title> — rename this chat
 /pin [off] — pin this chat to the top of the list
 /delete — delete this chat (asks first; generated files stay)
+/project [path|off] — point this chat at a project folder (no arg opens a picker)
 /compact — compact LLM history
 /usage — show/hide the usage panel (live tokens, cache, cost)
 /ambient — memory ambient status

@@ -41,10 +41,13 @@ pub struct AgentHandle {
     pub cancel: Arc<AtomicBool>,
 }
 
+/// `guard_writes` = o root do turno é um projeto do usuário, não a pasta
+/// descartável do chat. Aí escrever deixa de ser auto-aprovado.
 pub fn spawn_turn(
     cfg: Config,
     mode: AppMode,
     history: Vec<ChatMessage>,
+    guard_writes: bool,
 ) -> AgentHandle {
     let (event_tx, event_rx) = mpsc::channel();
     let (approval_tx, approval_rx) = mpsc::channel();
@@ -55,7 +58,7 @@ pub fn spawn_turn(
         .name("harness-agent".into())
         .spawn(move || {
             if let Err(e) =
-                run_turn_inner(cfg, mode, history, &event_tx, &approval_rx, &cancel_thread)
+                run_turn_inner(cfg, mode, history, &event_tx, &approval_rx, &cancel_thread, guard_writes)
             {
                 let msg = e.to_string();
                 if msg.contains("cancelled") {
@@ -81,6 +84,7 @@ fn run_turn_inner(
     tx: &Sender<AgentEvent>,
     approval_rx: &Receiver<ApprovalDecision>,
     cancel: &AtomicBool,
+    guard_writes: bool,
 ) -> Result<()> {
     // Weighted multi-provider rotation (Code/Office separate pools)
     if let Some(note) = crate::llm_pool::maybe_rotate(&mut cfg, mode) {
@@ -196,6 +200,7 @@ fn run_turn_inner(
 
     let mut final_text = String::new();
     let mut shell_always = cfg.auto_approve_shell;
+    let mut writes_always = false;
 
     for round in 0..max_rounds {
         if cancel.load(Ordering::Relaxed) {
@@ -241,7 +246,7 @@ fn run_turn_inner(
                     let args = call.function.arguments.clone();
                     let short_args = preview_args(&args, 180);
 
-                    if needs_approval(&cfg, &name, shell_always) {
+                    if needs_approval(&cfg, &name, shell_always, writes_always, guard_writes) {
                         let _ = tx.send(AgentEvent::NeedApproval {
                             name: name.clone(),
                             args_preview: short_args.clone(),
@@ -252,7 +257,12 @@ fn run_turn_inner(
                         match wait_approval(approval_rx, cancel) {
                             ApprovalWait::Allow => {}
                             ApprovalWait::AllowShellAlways => {
-                                shell_always = true;
+                                // "Sempre" vale para a categoria que pediu
+                                if is_write_tool(&name) {
+                                    writes_always = true;
+                                } else {
+                                    shell_always = true;
+                                }
                             }
                             ApprovalWait::Deny => {
                                 history.push(ChatMessage {
@@ -357,16 +367,34 @@ fn wait_approval(rx: &Receiver<ApprovalDecision>, cancel: &AtomicBool) -> Approv
     }
 }
 
-fn needs_approval(cfg: &Config, name: &str, shell_always: bool) -> bool {
+/// Ferramenta que altera arquivo.
+fn is_write_tool(name: &str) -> bool {
+    matches!(
+        name,
+        "write_file" | "replace_in_file" | "apply_patch" | "multi_edit" | "multi_replace"
+    )
+}
+
+/// Na pasta do chat, escrever é livre — é rascunho descartável. Apontando para
+/// um projeto de verdade, escrever passa a pedir aprovação: o agente estaria
+/// mexendo em código que você não quer perder.
+fn needs_approval(
+    cfg: &Config,
+    name: &str,
+    shell_always: bool,
+    writes_always: bool,
+    guard_writes: bool,
+) -> bool {
     if llm::is_safe_tool(name) && cfg.auto_approve_safe {
         return false;
     }
     if name == "run_command" {
         return !shell_always;
     }
-    // writes: auto if safe mode treats them as auto when auto_approve_safe is used only for reads
-    // Professional default: auto-approve writes (agent is local), only shell prompts.
-    matches!(name, "run_command")
+    if guard_writes && is_write_tool(name) {
+        return !writes_always;
+    }
+    false
 }
 
 fn preview_args(args: &str, max: usize) -> String {
@@ -375,5 +403,43 @@ fn preview_args(args: &str, max: usize) -> String {
         format!("{}…", &compact[..max])
     } else {
         compact
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cfg() -> Config {
+        Config {
+            auto_approve_safe: true,
+            auto_approve_shell: false,
+            ..Config::default()
+        }
+    }
+
+    #[test]
+    fn leitura_nunca_pede_aprovacao() {
+        for t in ["read_file", "search", "git_diff"] {
+            assert!(!needs_approval(&cfg(), t, false, false, true), "{t}");
+        }
+    }
+
+    #[test]
+    fn escrita_so_pede_quando_ha_projeto_apontado() {
+        // pasta do chat: rascunho, escreve à vontade
+        assert!(!needs_approval(&cfg(), "write_file", false, false, false));
+        // projeto do usuário: pede
+        assert!(needs_approval(&cfg(), "write_file", false, false, true));
+        // "Sempre" libera as escritas seguintes do turno
+        assert!(!needs_approval(&cfg(), "write_file", false, true, true));
+    }
+
+    #[test]
+    fn shell_e_escrita_tem_travas_independentes() {
+        // liberar shell não libera escrita no projeto
+        assert!(needs_approval(&cfg(), "apply_patch", true, false, true));
+        // liberar escrita não libera shell
+        assert!(needs_approval(&cfg(), "run_command", false, true, true));
     }
 }

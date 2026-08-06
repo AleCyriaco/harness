@@ -309,14 +309,12 @@ fn handle_msg(
             })?;
         }
         ClientMsg::RuntimeInfo => {
-            // Workers, métricas e grafo vivem neste processo; a GUI não tem
-            // como enxergá-los sozinha.
-            let root = { state.lock().unwrap().cfg.workspace.clone() };
+            // Workers e métricas vivem neste processo; a GUI não tem como
+            // enxergá-los sozinha. O grafo não vem daqui: a raiz é por sessão
+            // (o projeto apontado), e o daemon só conhece o workspace global.
             out_tx.send(ServerMsg::RuntimeInfo {
                 swarm: crate::swarm::snapshot(),
                 metrics: crate::metrics::snapshot(),
-                // sem varrer o disco: o polling da GUI é frequente
-                graph: crate::graph::stats(&root, false).unwrap_or_default(),
             })?;
         }
         ClientMsg::SwarmStop { id } => {
@@ -334,6 +332,7 @@ fn handle_msg(
             session_id,
             title,
             pinned,
+            project_dir,
         } => {
             let mut done = false;
             {
@@ -349,13 +348,16 @@ fn handle_msg(
                     if let Some(p) = pinned {
                         s.session.meta.pinned = p;
                     }
+                    if let Some(p) = project_dir.clone() {
+                        s.session.meta.project_dir = p.filter(|v| !v.trim().is_empty());
+                    }
                     let _ = session::save_session(&s.session);
                     done = true;
                 }
             }
             if !done {
                 // sessão não está viva: mexe direto no disco
-                let _ = session::update_meta(&session_id, title.as_deref(), pinned);
+                let _ = session::update_meta(&session_id, title.as_deref(), pinned, project_dir);
             }
             out_tx.send(ServerMsg::Ok {
                 message: "session updated".into(),
@@ -601,6 +603,7 @@ fn create_or_restore(
                 daemon_session_id: id,
                 token_less: None,
                 pinned: false,
+                project_dir: None,
                 title_locked: false,
             },
             messages: Vec::new(),
@@ -819,7 +822,7 @@ fn start_turn(
     text: String,
     out_tx: &Sender<ServerMsg>,
 ) -> Result<()> {
-    let (cfg, mode, history) = {
+    let (cfg, mode, history, guard_writes) = {
         let mut g = state.lock().unwrap();
         let cfg_base = g.cfg.clone();
         let s = g
@@ -839,16 +842,21 @@ fn start_turn(
             name: None,
         });
         let mut cfg = cfg_base;
-        cfg.workspace = PathBuf::from(&s.session.meta.chat_dir);
+        // Projeto apontado manda; sem ele o agente fica na pasta do chat.
+        cfg.workspace = session::effective_root(
+            s.session.meta.project_dir.as_deref(),
+            &s.session.meta.chat_dir,
+        );
         // Override por sessão vence o padrão global; os workers do swarm
         // herdam pelo mesmo `cfg`.
         if let Some(level) = s.token_less {
             cfg.token_less = level;
         }
-        (cfg, s.mode, s.history.clone())
+        let guard = s.session.meta.project_dir.is_some();
+        (cfg, s.mode, s.history.clone(), guard)
     };
 
-    let handle = agent::spawn_turn(cfg, mode, history);
+    let handle = agent::spawn_turn(cfg, mode, history, guard_writes);
     {
         let mut g = state.lock().unwrap();
         if let Some(s) = g.sessions.get_mut(session_id) {

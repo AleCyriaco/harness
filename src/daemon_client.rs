@@ -154,11 +154,13 @@ impl DaemonGuiClient {
         session_id: &str,
         title: Option<&str>,
         pinned: Option<bool>,
+        project_dir: Option<Option<String>>,
     ) -> Result<()> {
         self.send(&ClientMsg::UpdateSession {
             session_id: session_id.into(),
             title: title.map(|s| s.to_string()),
             pinned,
+            project_dir,
         })
     }
 
@@ -167,23 +169,13 @@ impl DaemonGuiClient {
         Ok(())
     }
 
-    /// Swarm + métricas + grafo — tudo isso vive no daemon, não aqui.
-    pub fn runtime_info(
-        &self,
-    ) -> Result<(
-        crate::swarm::SwarmSnapshot,
-        crate::metrics::Metrics,
-        crate::graph::GraphStats,
-    )> {
+    /// Swarm + métricas — vivem no daemon, não aqui.
+    pub fn runtime_info(&self) -> Result<(crate::swarm::SwarmSnapshot, crate::metrics::Metrics)> {
         self.send(&ClientMsg::RuntimeInfo)?;
         // socket local: se não responder rápido, tenta de novo no próximo ciclo
         // (nunca vale travar o frame da GUI por causa disto)
         match self.wait_reply(|m| matches!(m, ServerMsg::RuntimeInfo { .. }), 800)? {
-            ServerMsg::RuntimeInfo {
-                swarm,
-                metrics,
-                graph,
-            } => Ok((swarm, metrics, graph)),
+            ServerMsg::RuntimeInfo { swarm, metrics } => Ok((swarm, metrics)),
             _ => bail!("unexpected reply"),
         }
     }

@@ -50,6 +50,9 @@ pub enum ClientMsg {
         title: Option<String>,
         #[serde(default)]
         pinned: Option<bool>,
+        /// `Some(None)` desaponta o projeto; ausente não mexe.
+        #[serde(default)]
+        project_dir: Option<Option<String>>,
     },
     UserMessage {
         session_id: String,
@@ -113,7 +116,6 @@ pub enum ServerMsg {
     RuntimeInfo {
         swarm: crate::swarm::SwarmSnapshot,
         metrics: crate::metrics::Metrics,
-        graph: crate::graph::GraphStats,
     },
     Event {
         session_id: String,

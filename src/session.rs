@@ -35,6 +35,9 @@ pub struct SessionMeta {
     /// Favorito: vai para o topo da lista e não some no meio dos antigos.
     #[serde(default)]
     pub pinned: bool,
+    /// Projeto que este chat edita. `None` = o agente fica na pasta do chat.
+    #[serde(default)]
+    pub project_dir: Option<String>,
     /// Título posto à mão — o auto-título da primeira mensagem não o sobrescreve.
     #[serde(default)]
     pub title_locked: bool,
@@ -73,6 +76,7 @@ impl Session {
                 daemon_session_id: id.clone(),
                 token_less: None,
                 pinned: false,
+                project_dir: None,
                 title_locked: false,
             },
             messages: Vec::new(),
@@ -113,6 +117,7 @@ impl Session {
                 daemon_session_id: session_id,
                 token_less: None,
                 pinned: false,
+                project_dir: None,
                 title_locked: false,
             },
             messages: Vec::new(),
@@ -348,9 +353,26 @@ pub fn load_session(id: &str) -> Result<Session> {
     Ok(serde_json::from_str(&raw)?)
 }
 
+/// Onde o agente deste chat trabalha: o projeto apontado, ou a pasta do chat.
+/// Caminho vazio ou relativo é ignorado — root do agente tem que ser absoluto.
+pub fn effective_root(project_dir: Option<&str>, chat_dir: &str) -> PathBuf {
+    match project_dir.map(str::trim).filter(|p| !p.is_empty()) {
+        Some(p) if Path::new(p).is_absolute() => PathBuf::from(p),
+        _ => PathBuf::from(chat_dir),
+    }
+}
+
 /// Renomeia e/ou fixa uma sessão no disco. Renomear trava o auto-título.
-pub fn update_meta(id: &str, title: Option<&str>, pinned: Option<bool>) -> Result<SessionMeta> {
+pub fn update_meta(
+    id: &str,
+    title: Option<&str>,
+    pinned: Option<bool>,
+    project_dir: Option<Option<String>>,
+) -> Result<SessionMeta> {
     let mut s = load_session(id)?;
+    if let Some(p) = project_dir {
+        s.meta.project_dir = p.filter(|v| !v.trim().is_empty());
+    }
     if let Some(t) = title {
         let t = t.trim();
         if !t.is_empty() {
@@ -390,6 +412,7 @@ mod tests {
                 daemon_session_id: String::new(),
                 token_less: None,
                 pinned: false,
+                project_dir: None,
                 title_locked: false,
             },
             messages: Vec::new(),
@@ -478,6 +501,41 @@ mod tests {
             antes,
             "apagar também"
         );
+    }
+
+    #[test]
+    fn root_do_agente_segue_o_projeto_quando_absoluto() {
+        assert_eq!(
+            effective_root(Some("/tmp/proj"), "/chats/abc"),
+            PathBuf::from("/tmp/proj")
+        );
+        // sem projeto, ou com valor inútil, fica na pasta do chat
+        for bad in [None, Some(""), Some("   "), Some("relativo/nao/vale")] {
+            assert_eq!(
+                effective_root(bad, "/chats/abc"),
+                PathBuf::from("/chats/abc"),
+                "{bad:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn projeto_persiste_e_pode_ser_removido() {
+        let id = format!("test-proj-{}", uuid::Uuid::new_v4());
+        let mut s = sess("p", &[("user", "oi")]);
+        s.meta.id = id.clone();
+        save_session(&s).unwrap();
+
+        let m = update_meta(&id, None, None, Some(Some("/tmp/x".into()))).unwrap();
+        assert_eq!(m.project_dir.as_deref(), Some("/tmp/x"));
+        assert_eq!(
+            load_session(&id).unwrap().meta.project_dir.as_deref(),
+            Some("/tmp/x")
+        );
+        // string vazia desaponta
+        let m = update_meta(&id, None, None, Some(Some("  ".into()))).unwrap();
+        assert!(m.project_dir.is_none());
+        delete_session(&id).unwrap();
     }
 
     #[test]
