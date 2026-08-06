@@ -1866,7 +1866,7 @@ impl HarnessApp {
                             let _ = self.cfg.save();
                             self.messages.push(UiMessage {
                                 role: "system".into(),
-                                text: format!("{msg}\n(Chat history + vector memory kept)"),
+                                text: format!("{msg}\n(Chat history + memory kept)"),
                             });
                         }
                         Err(e) => self.push_error(e.to_string()),
@@ -4213,7 +4213,7 @@ impl HarnessApp {
     fn memory_view_ui(&mut self, ui: &mut egui::Ui) {
         let p = pal();
         ui.label(crate::theme::ui_medium("Memory", 14.0).color(p.text));
-        ui.label(crate::theme::meta("local vector store (SQLite)"));
+        ui.label(crate::theme::meta("local store (SQLite) · lexical match, not semantic"));
         ui.add_space(8.0);
         ui.add(
             egui::TextEdit::multiline(&mut self.memory_input)

@@ -470,7 +470,9 @@ fn code_tools() -> Vec<Value> {
         ),
         fn_tool(
             "memory_search",
-            "Semantic search over local vector memories.",
+            "Search stored memories. Matching is lexical (hashed words + character \
+             trigrams), not semantic: it finds wording you used before, not \
+             paraphrases of it. Prefer the terms the note itself would use.",
             json!({
                 "type": "object",
                 "properties": {

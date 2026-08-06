@@ -4,6 +4,7 @@ use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use uuid::Uuid;
 
 use crate::config;
@@ -262,8 +263,45 @@ fn derive_title(s: &Session) -> Option<String> {
     }
 }
 
+/// Lista em cache. `list_sessions` desserializa a sessão **inteira** (histórico
+/// do LLM + ui_log) só para extrair o meta, e é chamada no fim de cada turno —
+/// sem cache isso relê todos os chats a cada resposta.
+static LIST_CACHE: Mutex<Option<(u64, Vec<SessionMeta>)>> = Mutex::new(None);
+
+/// Impressão digital barata do diretório: quantidade + mtime mais recente.
+/// Um `save_session` muda o mtime do arquivo, então o cache cai sozinho.
+fn dir_fingerprint(dir: &Path) -> u64 {
+    let mut count: u64 = 0;
+    let mut newest: u128 = 0;
+    if let Ok(rd) = fs::read_dir(dir) {
+        for e in rd.flatten() {
+            if e.path().extension().and_then(|s| s.to_str()) != Some("json") {
+                continue;
+            }
+            count += 1;
+            if let Some(t) = e
+                .metadata()
+                .ok()
+                .and_then(|m| m.modified().ok())
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            {
+                newest = newest.max(t.as_nanos());
+            }
+        }
+    }
+    count.wrapping_mul(0x9e37_79b9).wrapping_add(newest as u64)
+}
+
 pub fn list_sessions() -> Result<Vec<SessionMeta>> {
     let dir = sessions_dir()?;
+    let fp = dir_fingerprint(&dir);
+    if let Ok(g) = LIST_CACHE.lock() {
+        if let Some((cached_fp, list)) = g.as_ref() {
+            if *cached_fp == fp {
+                return Ok(list.clone());
+            }
+        }
+    }
     let mut out = Vec::new();
     let Ok(rd) = fs::read_dir(&dir) else {
         return Ok(out);
@@ -288,6 +326,9 @@ pub fn list_sessions() -> Result<Vec<SessionMeta>> {
             .then(b.updated_at.cmp(&a.updated_at))
     });
     out.truncate(80);
+    if let Ok(mut g) = LIST_CACHE.lock() {
+        *g = Some((fp, out.clone()));
+    }
     Ok(out)
 }
 
@@ -412,6 +453,31 @@ mod tests {
         assert!(!json.exists(), "a conversa devia sumir");
         assert!(gerado.exists(), "o arquivo gerado devia ficar");
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// O cache tem que cair quando uma sessão é gravada, senão a lista congela.
+    #[test]
+    fn cache_da_lista_invalida_ao_gravar() {
+        let id = format!("test-cache-{}", uuid::Uuid::new_v4());
+        let antes = list_sessions().unwrap().len();
+        // segunda chamada vem do cache e tem que bater
+        assert_eq!(list_sessions().unwrap().len(), antes);
+
+        let mut s = sess("cache", &[("user", "oi")]);
+        s.meta.id = id.clone();
+        save_session(&s).unwrap();
+        assert_eq!(
+            list_sessions().unwrap().len(),
+            antes + 1,
+            "gravar tem que invalidar o cache"
+        );
+
+        delete_session(&id).unwrap();
+        assert_eq!(
+            list_sessions().unwrap().len(),
+            antes,
+            "apagar também"
+        );
     }
 
     #[test]

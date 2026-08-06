@@ -13,6 +13,7 @@ use crate::tokenless::TokenLessLevel;
 pub struct LevelUsage {
     pub tag: String,
     pub replies: u64,
+    #[serde(default)]
     pub completion_tokens: u64,
 }
 
@@ -30,10 +31,14 @@ impl LevelUsage {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SourceUsage {
     pub name: String,
+    #[serde(default)]
     pub calls: u64,
+    #[serde(default)]
     pub prompt_tokens: u64,
+    #[serde(default)]
     pub completion_tokens: u64,
     /// Entrada servida pelo cache do provedor (0 quando ele não informa).
+    #[serde(default)]
     pub cached_tokens: u64,
 }
 
@@ -55,22 +60,34 @@ impl SourceUsage {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Metrics {
     /// Uma entrada por nível de token_less já usado.
+    #[serde(default)]
     pub token_less: Vec<LevelUsage>,
+    #[serde(default)]
     pub calls: u64,
+    #[serde(default)]
     pub prompt_tokens: u64,
+    #[serde(default)]
     pub completion_tokens: u64,
     /// Entrada servida pelo cache do provedor (0 quando ele não informa).
+    #[serde(default)]
     pub cached_tokens: u64,
     /// Custo acumulado em USD, só quando há preço configurado no pool.
+    #[serde(default)]
     pub cost_usd: f64,
     /// Uma entrada por origem: "main" e cada worker.
+    #[serde(default)]
     pub by_source: Vec<SourceUsage>,
     /// Consultas ao grafo e tokens de leitura evitados (estimativa, ~4 chars/token).
+    #[serde(default)]
     pub graph_queries: u64,
+    #[serde(default)]
     pub graph_saved_tokens: i64,
+    #[serde(default)]
     pub graph_builds: u64,
     /// Última build: quanto durou e quantos arquivos entraram.
+    #[serde(default)]
     pub graph_last_build_ms: u64,
+    #[serde(default)]
     pub graph_last_build_files: usize,
 }
 

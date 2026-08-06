@@ -153,6 +153,12 @@ fn db_path() -> Result<PathBuf> {
 }
 
 /// Feature-hashing embedding: stable, model-free, tiny RAM.
+/// Vetor **lexical**, não semântico: palavras e trigramas de caracteres jogados
+/// num espaço fixo por hash, normalizado L2. Acha o que você escreveu de novo;
+/// não liga "como faço login" a "fluxo de autenticação".
+///
+/// Trocar por embedding de modelo exigiria migração: `DIM` é fixo em tempo de
+/// compilação e os blobs já gravados ficariam incompatíveis.
 pub fn embed(text: &str) -> [f32; DIM] {
     let mut v = [0.0f32; DIM];
     let lower = text.to_ascii_lowercase();

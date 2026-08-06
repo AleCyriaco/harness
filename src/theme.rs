@@ -56,6 +56,11 @@ pub struct Palette {
     pub diff_add_fg: Color32,
     pub diff_del_bg: Color32,
     pub diff_del_fg: Color32,
+    /// Realce de sintaxe nos blocos de código do chat.
+    pub syn_kw: Color32,
+    pub syn_str: Color32,
+    pub syn_com: Color32,
+    pub syn_num: Color32,
 }
 
 pub const PAPER: Palette = Palette {
@@ -78,6 +83,10 @@ pub const PAPER: Palette = Palette {
     diff_add_fg: Color32::from_rgb(0x4a, 0x77, 0x42),
     diff_del_bg: Color32::from_rgb(0xf7, 0xec, 0xe7),
     diff_del_fg: Color32::from_rgb(0xb4, 0x59, 0x3c),
+    syn_kw: Color32::from_rgb(0x8f, 0x53, 0x8c),
+    syn_str: Color32::from_rgb(0x4a, 0x77, 0x42),
+    syn_com: Color32::from_rgb(0xa3, 0x9b, 0x8d),
+    syn_num: Color32::from_rgb(0xa2, 0x60, 0x4b),
 };
 
 pub const EMBER: Palette = Palette {
@@ -100,6 +109,10 @@ pub const EMBER: Palette = Palette {
     diff_add_fg: Color32::from_rgb(0x8f, 0xae, 0x87),
     diff_del_bg: Color32::from_rgb(0x2a, 0x1c, 0x18),
     diff_del_fg: Color32::from_rgb(0xe0, 0x8a, 0x68),
+    syn_kw: Color32::from_rgb(0xc9, 0x8b, 0xc6),
+    syn_str: Color32::from_rgb(0x8f, 0xae, 0x87),
+    syn_com: Color32::from_rgb(0x6d, 0x66, 0x5b),
+    syn_num: Color32::from_rgb(0xe0, 0xa0, 0x80),
 };
 
 /// 0 = Paper, 1 = Ember. Global leve para `pal()` ser chamável de qualquer widget.
