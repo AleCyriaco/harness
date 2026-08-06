@@ -161,7 +161,7 @@ pub fn help_text() -> String {
 /web [url] — open harness WebView
 /side — clear side panel
 /tokenless [off|lite|full|ultra] — Token Less Cost: compressed replies in this chat
-/graph [build|<query>] — structural graph of the workspace
+/graph [build|impact <symbol>|<query>] — structural graph of the workspace
 /rename <title> — rename this chat
 /pin [off] — pin this chat to the top of the list
 /delete — delete this chat (asks first; generated files stay)

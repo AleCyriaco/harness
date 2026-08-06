@@ -353,6 +353,19 @@ fn code_tools() -> Vec<Value> {
             }),
         ),
         fn_tool(
+            "graph_impact",
+            "Blast radius of a symbol: which files break if you change it, grouped by how \
+             many reference hops away they are. Run this BEFORE editing a shared symbol.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "symbol": {"type": "string"},
+                    "depth": {"type": "integer", "description": "reference hops, 1..6 (default 2)"}
+                },
+                "required": ["symbol"]
+            }),
+        ),
+        fn_tool(
             "graph_stats",
             "Graph coverage: files, symbols, clusters, how many files drifted since the build.",
             json!({"type": "object", "properties": {}}),
@@ -608,6 +621,33 @@ fn code_tools() -> Vec<Value> {
             "skill_list",
             "List available skills under .harness/skills/.",
             json!({"type": "object", "properties": {}}),
+        ),
+        fn_tool(
+            "skill_save",
+            "Create or update a skill. The previous body is archived as a version, so edits \
+             are reversible. Frontmatter: description, triggers (when it applies), \
+             not_when (when it must not), validate (how to know it worked).",
+            json!({
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "markdown": {"type": "string", "description": "full file, frontmatter + body"}
+                },
+                "required": ["name", "markdown"]
+            }),
+        ),
+        fn_tool(
+            "skill_versions",
+            "List archived versions of a skill, and restore one when `restore` is given. \
+             Restoring makes the old body the newest version; nothing is overwritten.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "restore": {"type": "integer", "description": "version to bring back"}
+                },
+                "required": ["name"]
+            }),
         ),
         fn_tool(
             "skill_load",
@@ -892,6 +932,7 @@ pub fn dispatch(
                 | "graph_build"
                 | "graph_query"
                 | "graph_stats"
+                | "graph_impact"
         )
     {
         bail!("tool '{name}' only in Code mode");
@@ -1183,6 +1224,15 @@ pub fn dispatch(
             crate::metrics::record_graph_query(res.saved_tokens());
             Ok(res.render())
         }
+        "graph_impact" => {
+            let symbol = require_str(&args, "symbol")?;
+            let depth = args
+                .get("depth")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(2)
+                .clamp(1, 6) as usize;
+            Ok(crate::graph::impact(root, symbol, depth)?.render())
+        }
         "graph_stats" => {
             let st = crate::graph::stats(root, true)?;
             Ok(format!(
@@ -1427,11 +1477,42 @@ pub fn dispatch(
             let _ = crate::skills::ensure_default_skills(root);
             Ok(crate::skills::format_skills(&crate::skills::list_skills(root)))
         }
+        "skill_save" => {
+            let name = require_str(&args, "name")?;
+            let markdown = require_str(&args, "markdown")?;
+            let v = crate::skills::save_skill(root, name, markdown)?;
+            Ok(format!(
+                "skill {name} saved as v{v}{}",
+                if v > 1 { " (previous archived)" } else { "" }
+            ))
+        }
+        "skill_versions" => {
+            let name = require_str(&args, "name")?;
+            if let Some(v) = args.get("restore").and_then(|v| v.as_u64()) {
+                let now = crate::skills::restore_skill(root, name, v as u32)?;
+                return Ok(format!("{name}: v{v} restored as v{now}"));
+            }
+            let versions = crate::skills::skill_versions(root, name);
+            let cur = crate::skills::load_skill(root, name)
+                .map(|s| s.version)
+                .unwrap_or(0);
+            if versions.is_empty() {
+                return Ok(format!("{name}: v{cur} (no earlier versions)"));
+            }
+            Ok(format!(
+                "{name}: current v{cur} · archived {}",
+                versions
+                    .iter()
+                    .map(|v| format!("v{v}"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ))
+        }
         "skill_load" => {
             let name = require_str(&args, "name")?;
             let _ = crate::skills::ensure_default_skills(root);
             match crate::skills::load_skill(root, name) {
-                Some(s) => Ok(s.body),
+                Some(s) => Ok(crate::skills::format_for_prompt(&s)),
                 None => bail!("skill not found: {name}"),
             }
         }

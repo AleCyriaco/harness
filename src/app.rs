@@ -1997,6 +1997,17 @@ impl HarnessApp {
                         role: "system".into(),
                         text,
                     });
+                } else if let Some(sym) = a
+                    .strip_prefix("impact ")
+                    .or_else(|| a.strip_prefix("impacto "))
+                {
+                    self.graph_query = sym.trim().to_string();
+                    self.run_graph_impact();
+                    let answer = self.graph_answer.clone();
+                    self.messages.push(UiMessage {
+                        role: "system".into(),
+                        text: answer,
+                    });
                 } else if a == "build" || a == "index" {
                     self.run_graph_build(false);
                     let msg = self.status.clone();
@@ -4071,6 +4082,13 @@ impl HarnessApp {
             if go && !self.graph_query.trim().is_empty() {
                 self.run_graph_query();
             }
+            if w::chip(ui, "impact")
+                .on_hover_text("What breaks if this symbol changes")
+                .clicked()
+                && !self.graph_query.trim().is_empty()
+            {
+                self.run_graph_impact();
+            }
         });
         if !self.graph_answer.is_empty() {
             ui.add_space(6.0);
@@ -4170,6 +4188,16 @@ impl HarnessApp {
         let root = self.cfg.workspace.clone();
         if let Ok(st) = crate::graph::stats(&root, true) {
             self.graph_stats = st;
+        }
+    }
+
+    /// Raio de impacto do símbolo digitado na caixa de busca.
+    fn run_graph_impact(&mut self) {
+        let root = self.cfg.workspace.clone();
+        let q = self.graph_query.trim().to_string();
+        match crate::graph::impact(&root, &q, 2) {
+            Ok(res) => self.graph_answer = res.render(),
+            Err(e) => self.graph_answer = format!("error: {e}"),
         }
     }
 

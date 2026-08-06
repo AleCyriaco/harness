@@ -106,6 +106,155 @@ impl QueryResult {
     }
 }
 
+/// Raio de impacto: quem quebra se `symbol` mudar.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ImpactResult {
+    pub symbol: String,
+    /// Onde o símbolo é definido (nível 0).
+    pub defined_in: Vec<String>,
+    /// Um degrau por salto de referência: nível 1 chama direto, 2 chama quem chama…
+    pub levels: Vec<Vec<String>>,
+    pub total_files: usize,
+    /// Parou por causa do teto, não porque acabou.
+    pub truncated: bool,
+    pub max_depth: usize,
+    /// Arquivos no grafo todo — serve para saber se o raio saturou.
+    pub total_in_graph: usize,
+}
+
+impl ImpactResult {
+    pub fn render(&self) -> String {
+        if self.defined_in.is_empty() {
+            return format!(
+                "impact: '{}' not found in the graph — run graph_build, or check the name",
+                self.symbol
+            );
+        }
+        let mut out = vec![format!("impact of {}", self.symbol)];
+        out.push(format!("defined in: {}", self.defined_in.join(", ")));
+        if self.levels.is_empty() {
+            out.push("nothing references it — changing it is contained".into());
+            return out.join("\n");
+        }
+        for (i, files) in self.levels.iter().enumerate() {
+            let share = if self.total_in_graph > 0 {
+                files.len() as f32 / self.total_in_graph as f32
+            } else {
+                0.0
+            };
+            out.push(format!("{} hop(s) away ({} files):", i + 1, files.len()));
+            // Um nível que pega quase tudo não é informação: é o grafo dizendo
+            // que o símbolo é central demais para o raio ser seletivo.
+            if share >= 0.4 {
+                out.push(format!(
+                    "  ({:.0}% of the codebase — too broad to be useful; trust hop 1)",
+                    share * 100.0
+                ));
+                continue;
+            }
+            for f in files {
+                out.push(format!("  {f}"));
+            }
+        }
+        out.push(format!(
+            "{} file(s) in the blast radius{}",
+            self.total_files,
+            if self.truncated {
+                format!(" — stopped at depth {} (there may be more)", self.max_depth)
+            } else {
+                String::new()
+            }
+        ));
+        out.join("\n")
+    }
+}
+
+/// Fecho transitivo pela tabela `refs`: começa nos arquivos que definem o
+/// símbolo e, a cada salto, pega quem referencia algo definido no nível anterior.
+///
+/// `max_depth` existe porque codebase acoplada vira bola de pelo: sem teto, o
+/// terceiro salto costuma devolver o projeto inteiro e a resposta perde o valor.
+pub fn impact(root: &Path, symbol: &str, max_depth: usize) -> Result<ImpactResult> {
+    let conn = open(root)?;
+    let max_depth = max_depth.clamp(1, 6);
+
+    let defining: Vec<(i64, String)> = {
+        let mut st = conn.prepare(
+            "SELECT DISTINCT f.id, f.path FROM symbols s JOIN files f ON f.id = s.file_id
+             WHERE s.name = ?1",
+        )?;
+        let rows = st.query_map(params![symbol], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        rows.flatten().collect()
+    };
+    if defining.is_empty() {
+        return Ok(ImpactResult {
+            symbol: symbol.into(),
+            max_depth,
+            ..Default::default()
+        });
+    }
+
+    let total_in_graph: usize = conn
+        .query_row("SELECT COUNT(*) FROM files", [], |r| r.get::<_, i64>(0))
+        .unwrap_or(0) as usize;
+
+    let mut visited: HashSet<i64> = defining.iter().map(|(id, _)| *id).collect();
+    // o primeiro salto olha o símbolo pedido; os seguintes, o que a fronteira define
+    let mut names: HashSet<String> = HashSet::from([symbol.to_string()]);
+    let mut levels: Vec<Vec<String>> = Vec::new();
+    let mut truncated = false;
+
+    let mut q_refs = conn.prepare(
+        "SELECT DISTINCT f.id, f.path FROM refs r JOIN files f ON f.id = r.file_id
+         WHERE r.name = ?1",
+    )?;
+    let mut q_syms = conn.prepare("SELECT DISTINCT name FROM symbols WHERE file_id = ?1")?;
+
+    for depth in 1..=max_depth {
+        let mut next: Vec<(i64, String)> = Vec::new();
+        for n in &names {
+            let rows = q_refs.query_map(params![n], |r| Ok((r.get::<_, i64>(0)?, r.get(1)?)))?;
+            for (id, path) in rows.flatten() {
+                if visited.insert(id) {
+                    next.push((id, path));
+                }
+            }
+        }
+        if next.is_empty() {
+            break;
+        }
+        next.sort_by(|a, b| a.1.cmp(&b.1));
+        levels.push(next.iter().map(|(_, p)| p.clone()).collect());
+        let frontier: Vec<i64> = next.iter().map(|(id, _)| *id).collect();
+
+        if depth == max_depth {
+            // ainda havia fronteira quando o teto chegou
+            truncated = true;
+            break;
+        }
+        names.clear();
+        for id in &frontier {
+            let rows = q_syms.query_map(params![id], |r| r.get::<_, String>(0))?;
+            for n in rows.flatten() {
+                names.insert(n);
+            }
+        }
+        if names.is_empty() {
+            break;
+        }
+    }
+
+    Ok(ImpactResult {
+        symbol: symbol.into(),
+        defined_in: defining.into_iter().map(|(_, p)| p).collect(),
+        total_files: visited.len(),
+        levels,
+        truncated,
+        max_depth,
+        total_in_graph,
+    })
+}
+
 fn db_path(root: &Path) -> Result<PathBuf> {
     let dirs = directories::ProjectDirs::from("sh", "harness", "harness")
         .context("dirs")?;
@@ -830,6 +979,16 @@ mod tests {
         assert!(js.refs.contains("paintThing"), "{:?}", js.refs);
     }
 
+    #[test]
+    fn impact_para_quando_ninguem_referencia() {
+        // símbolo inexistente: sem grafo montado, o resultado é vazio e honesto
+        let r = ImpactResult {
+            symbol: "nada".into(),
+            ..Default::default()
+        };
+        assert!(r.render().contains("not found"));
+    }
+
     /// Roda de verdade sobre o src/ deste repo:
     /// `cargo test -- --ignored graph_end_to_end --nocapture`
     #[test]
@@ -843,5 +1002,16 @@ mod tests {
         eprintln!("{}", q.render());
         assert!(!q.symbols.is_empty());
         assert!(q.saved_tokens() > 0);
+
+        // raio de impacto de um símbolo bem conectado
+        let i = impact(root, "pal", 3).unwrap();
+        eprintln!("{}", i.render());
+        assert!(!i.defined_in.is_empty(), "pal deve estar no grafo");
+        assert!(i.total_files > 1, "pal é usado em vários arquivos");
+
+        // e de um que ninguém chama
+        let none = impact(root, "simbolo_que_nao_existe_xyz", 3).unwrap();
+        assert!(none.defined_in.is_empty());
+        assert!(none.render().contains("not found"));
     }
 }
