@@ -12,7 +12,6 @@ pub struct JobInfo {
     pub id: u64,
     pub command: String,
     pub status: String,
-    pub started: String,
     pub output_preview: String,
 }
 
@@ -57,7 +56,6 @@ pub fn start(cwd: &std::path::Path, command: &str) -> Result<JobInfo> {
         id,
         command: command.to_string(),
         status: "running".into(),
-        started: chrono::Local::now().to_rfc3339(),
         output_preview: String::new(),
     };
     with_jobs(|g| {

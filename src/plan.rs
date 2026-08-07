@@ -72,13 +72,6 @@ pub fn set_done(id: u32, done: bool) -> Result<String> {
     }
 }
 
-pub fn clear() {
-    if let Ok(mut g) = PLAN.lock() {
-        *g = Plan::default();
-        g.next_id = 1;
-    }
-}
-
 pub fn format() -> String {
     let g = PLAN.lock().ok();
     let Some(g) = g else {

@@ -1,8 +1,7 @@
 //! Provider doctor + named profiles + cache/usage helpers.
 
-use anyhow::{Result, bail};
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 

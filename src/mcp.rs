@@ -24,7 +24,6 @@ pub struct McpToolInfo {
     pub server: String,
     pub name: String,
     pub description: String,
-    pub input_schema: Value,
 }
 
 struct LiveServer {
@@ -107,7 +106,6 @@ pub fn connect(cfg: &McpServerConfig) -> Result<String> {
                 .and_then(|d| d.as_str())
                 .unwrap_or("")
                 .to_string(),
-            input_schema: t.get("inputSchema").cloned().unwrap_or(json!({})),
         });
     }
 

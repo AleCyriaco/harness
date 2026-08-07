@@ -963,93 +963,6 @@ impl HarnessApp {
         self.refresh_daemon_sessions();
     }
 
-    fn apply_attach_payload(&mut self, id: &str, payload: &serde_json::Value) {
-        let chat_dir = payload
-            .get("chat_dir")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-        let title = payload
-            .get("title")
-            .and_then(|v| v.as_str())
-            .unwrap_or("session")
-            .to_string();
-        let mode = payload
-            .get("mode")
-            .and_then(|v| v.as_str())
-            .unwrap_or("Code");
-        let mode = if mode.eq_ignore_ascii_case("office") {
-            AppMode::Office
-        } else {
-            AppMode::Code
-        };
-        self.mode = mode;
-        self.cfg.mode = mode;
-
-        if let Ok(disk) = session::load_session(id) {
-            self.session = disk;
-            self.session.meta.daemon_session_id = id.to_string();
-            self.messages = self
-                .session
-                .ui_log
-                .iter()
-                .map(|l| UiMessage {
-                    role: l.role.clone(),
-                    text: l.text.clone(),
-                })
-                .collect();
-            self.llm_history = self.session.messages.clone();
-        } else {
-            self.session =
-                Session::from_daemon(id.to_string(), chat_dir, title, mode, &self.cfg.workspace);
-            self.messages = self
-                .session
-                .ui_log
-                .iter()
-                .map(|l| UiMessage {
-                    role: l.role.clone(),
-                    text: l.text.clone(),
-                })
-                .collect();
-            self.llm_history.clear();
-        }
-
-        if let Some(hist) = payload.get("history").and_then(|h| h.as_array()) {
-            if self.llm_history.is_empty() {
-                for m in hist {
-                    let role = m
-                        .get("role")
-                        .and_then(|r| r.as_str())
-                        .unwrap_or("assistant");
-                    let content = m
-                        .get("content")
-                        .and_then(|c| c.as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    if content.is_empty() {
-                        continue;
-                    }
-                    self.llm_history.push(ChatMessage {
-                        role: role.into(),
-                        content: Some(content.clone()),
-                        tool_calls: None,
-                        tool_call_id: None,
-                        name: None,
-                    });
-                    self.messages.push(UiMessage {
-                        role: role.into(),
-                        text: content,
-                    });
-                }
-            }
-        }
-        if let Some(busy) = payload.get("busy").and_then(|b| b.as_bool()) {
-            self.busy = busy;
-        }
-        self.artifacts = scan_artifacts(&self.session.chat_path(), self.mode);
-        self.status = format!("attached · 📁 {}", self.session.meta.chat_folder_name);
-        let _ = session::save_session(&self.session);
-    }
 
     /// Puxa o estado do swarm do daemon. Rápido quando o painel está aberto,
     /// lento no resto (só para o ponto do rail e a status bar).
@@ -1630,7 +1543,7 @@ impl HarnessApp {
                     s.ensure_chat_dir(&self.cfg.workspace);
                     let _ = session::save_session(&s);
                 }
-                let mut messages: Vec<UiMessage> = s
+                let messages: Vec<UiMessage> = s
                     .ui_log
                     .iter()
                     .map(|l| UiMessage {

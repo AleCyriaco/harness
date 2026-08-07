@@ -140,12 +140,6 @@ pub fn set_runtime_active(name: &str) {
     }
 }
 
-pub fn clear_runtime_active() {
-    if let Ok(mut g) = RUNTIME_ACTIVE.lock() {
-        *g = None;
-    }
-}
-
 pub fn last_failover_note() -> String {
     LAST_FAILOVER.lock().map(|g| g.clone()).unwrap_or_default()
 }
@@ -639,14 +633,6 @@ pub fn upsert_endpoint(cfg: &mut Config, ep: LlmEndpoint) {
     } else {
         cfg.llm_pool.push(ep);
     }
-}
-
-pub fn apply_config_view(cfg: &Config) -> Config {
-    let mut c = cfg.clone();
-    if let Some(ep) = resolve_endpoint(&c, None) {
-        ep.apply_to(&mut c);
-    }
-    c
 }
 
 #[cfg(test)]

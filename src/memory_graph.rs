@@ -2,7 +2,6 @@
 
 use anyhow::Result;
 use rusqlite::{Connection, params};
-use std::path::PathBuf;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
@@ -151,28 +150,6 @@ pub fn graph_summary() -> Result<String> {
     Ok(format!("nodes={nodes} edges={edges} stale={stale}"))
 }
 
-pub fn related(id: i64, limit: usize) -> Result<String> {
-    let conn = db()?;
-    let mut stmt = conn.prepare(
-        "SELECT n.id, n.text, e.weight FROM edges e
-         JOIN nodes n ON n.id = e.dst
-         WHERE e.src = ?1 AND n.stale=0
-         ORDER BY e.weight DESC LIMIT ?2",
-    )?;
-    let rows = stmt.query_map(params![id, limit as i64], |r| {
-        Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, f64>(2)?))
-    })?;
-    let mut lines = Vec::new();
-    for r in rows.flatten() {
-        lines.push(format!("#{} ({:.2}) {}", r.0, r.2, r.1.chars().take(120).collect::<String>()));
-    }
-    if lines.is_empty() {
-        Ok("(no related nodes)".into())
-    } else {
-        Ok(lines.join("\n"))
-    }
-}
-
 // --- Ambient mode ---
 static AMBIENT_ON: AtomicBool = AtomicBool::new(false);
 static LAST_DRIFT: Mutex<Option<Instant>> = Mutex::new(None);
@@ -226,22 +203,4 @@ pub fn on_user_message(text: &str) {
         // store a drift marker
         let _ = add_node(&format!("topic shift: {}", text.chars().take(160).collect::<String>()), "drift");
     }
-}
-
-pub fn extract_session_end(summary: &str) -> Result<i64> {
-    if summary.trim().is_empty() {
-        bail_empty()
-    } else {
-        add_node(summary, "session_end")
-    }
-}
-
-fn bail_empty() -> Result<i64> {
-    anyhow::bail!("empty summary")
-}
-
-// silence unused PathBuf
-#[allow(dead_code)]
-fn _p() -> PathBuf {
-    PathBuf::new()
 }

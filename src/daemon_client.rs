@@ -2,7 +2,7 @@
 
 use anyhow::{Context, Result, bail};
 use std::collections::VecDeque;
-use std::io::{BufRead, Write};
+use std::io::Write;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -35,8 +35,6 @@ pub struct DaemonGuiClient {
     /// Eventos que chegaram no meio de uma chamada request/response.
     /// Sem isto um delta de stream some quando a GUI pede daemon_info.
     stash: Stash,
-    /// Prefer TCP on reconnects when unix fails
-    use_tcp: bool,
 }
 
 type Stash = Arc<Mutex<VecDeque<Incoming>>>;
@@ -51,7 +49,6 @@ impl DaemonGuiClient {
             Ok(x) => (x.0, x.1),
             Err(_) => daemon::connect_stream(true)?, // force TCP fallback
         };
-        let use_tcp = use_tcp || true; // after fallback may be tcp
         let write = Arc::new(Mutex::new(w));
         let stash: Stash = Arc::new(Mutex::new(VecDeque::new()));
         let (tx, incoming) = mpsc::channel();
@@ -86,7 +83,6 @@ impl DaemonGuiClient {
             write,
             incoming,
             stash,
-            use_tcp: use_tcp || cfg!(windows),
         };
         // announce
         client.send(&ClientMsg::Hello {
@@ -368,20 +364,6 @@ impl DaemonGuiClient {
         }
     }
 
-    pub fn bus(&self, from: &str, to: Option<&str>, body: &str) -> Result<()> {
-        self.send(&ClientMsg::Bus {
-            from_session: from.into(),
-            to_session: to.map(|s| s.to_string()),
-            body: body.into(),
-        })?;
-        let _ = wait_reply_filter(
-            &self.incoming,
-            &self.stash,
-            |m| matches!(m, ServerMsg::Ok { .. } | ServerMsg::Error { .. }),
-            2000,
-        );
-        Ok(())
-    }
 }
 
 fn dispatch_incoming(tx: &Sender<Incoming>, msg: ServerMsg) -> Result<(), ()> {

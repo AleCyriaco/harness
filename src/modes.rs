@@ -18,11 +18,4 @@ impl AppMode {
             Self::Office => "Office",
         }
     }
-
-    pub fn subtitle(self) -> &'static str {
-        match self {
-            Self::Code => "fast · low RAM · edit/run",
-            Self::Office => "doc · sheet · pdf · chat",
-        }
-    }
 }
