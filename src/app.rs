@@ -1881,7 +1881,6 @@ impl HarnessApp {
                 if let Some(profile) = m.strip_prefix("__profile__:") {
                     match crate::provider_doctor::apply_profile(&mut self.cfg, profile.trim()) {
                         Ok(msg) => {
-                            crate::llm_pool::ensure_pool(&mut self.cfg);
                             // Clone before mut borrow for upsert
                             let ep = crate::llm_pool::LlmEndpoint {
                                 name: profile.trim().into(),
@@ -1906,6 +1905,14 @@ impl HarnessApp {
                             };
                             crate::llm_pool::upsert_endpoint(&mut self.cfg, ep);
                             self.cfg.active_llm = profile.trim().into();
+                            // runtime_active velho (de failover/rotação) tem
+                            // prioridade sobre active_llm no resolve_endpoint —
+                            // troca antes do seed para não vazar o endpoint antigo.
+                            crate::llm_pool::set_runtime_active(&self.cfg.active_llm);
+                            crate::llm_pool::set_failover_note("");
+                            // Seed depois do upsert: ensure_pool sincroniza os
+                            // campos flat a partir do endpoint ativo (o perfil).
+                            crate::llm_pool::ensure_pool(&mut self.cfg);
                             self.draft_api_base = self.cfg.api_base.clone();
                             self.draft_api_key = self.cfg.api_key.clone();
                             self.draft_model = self.cfg.model.clone();
@@ -2503,30 +2510,53 @@ impl HarnessApp {
         self.cfg.api_base = self.draft_api_base.trim().to_string();
         self.cfg.api_key = self.draft_api_key.trim().to_string();
         self.cfg.model = self.draft_model.trim().to_string();
-        // Keep multi-LLM pool in sync with primary fields
+        // Seed do pool (defaults + meta) usa os campos flat como semente.
         crate::llm_pool::ensure_pool(&mut self.cfg);
+        // ensure_pool sincroniza os campos flat *a partir* do endpoint ativo —
+        // reaplica os drafts para a edição do usuário não ser revertida.
+        self.cfg.api_base = self.draft_api_base.trim().to_string();
+        self.cfg.api_key = self.draft_api_key.trim().to_string();
+        self.cfg.model = self.draft_model.trim().to_string();
         let active = if self.cfg.active_llm.is_empty() {
             "primary".to_string()
         } else {
             self.cfg.active_llm.clone()
         };
         // Clone fields before mut borrow for upsert
-        let ep = crate::llm_pool::LlmEndpoint {
-            name: active.clone(),
-            api_base: self.cfg.api_base.clone(),
-            api_key: self.cfg.api_key.clone(),
-            model: self.cfg.model.clone(),
-            enabled: true,
-            priority: 0,
-            weight: 50,
-            use_for_code: true,
-            use_for_office: true,
-            use_for_workers: false,
-            price_in: 0.0,
-            price_out: 0.0,
-            wire: String::new(),
-        };
-        crate::llm_pool::upsert_endpoint(&mut self.cfg, ep);
+        if self.cfg.llm_pool.iter().any(|e| e.name == active) {
+            // Já existe: atualiza credenciais e modelo, preservando
+            // wire, pesos, preços e flags que o usuário ajustou no painel.
+            let (base, key, model) = (
+                self.cfg.api_base.clone(),
+                self.cfg.api_key.clone(),
+                self.cfg.model.clone(),
+            );
+            for e in self.cfg.llm_pool.iter_mut() {
+                if e.name == active {
+                    e.api_base = base.clone();
+                    e.api_key = key.clone();
+                    e.model = model.clone();
+                    e.enabled = true;
+                }
+            }
+        } else {
+            let ep = crate::llm_pool::LlmEndpoint {
+                name: active.clone(),
+                api_base: self.cfg.api_base.clone(),
+                api_key: self.cfg.api_key.clone(),
+                model: self.cfg.model.clone(),
+                enabled: true,
+                priority: 0,
+                weight: 50,
+                use_for_code: true,
+                use_for_office: true,
+                use_for_workers: false,
+                price_in: 0.0,
+                price_out: 0.0,
+                wire: String::new(),
+            };
+            crate::llm_pool::upsert_endpoint(&mut self.cfg, ep);
+        }
         self.cfg.active_llm = active;
         crate::llm_pool::set_runtime_active(&self.cfg.active_llm);
         let ws = PathBuf::from(self.draft_workspace.trim());
@@ -5222,7 +5252,7 @@ impl eframe::App for HarnessApp {
 const PROVIDERS: [(&str, &str, &str); 4] = [
     ("Grok", "https://api.x.ai/v1", "grok-4.5"),
     ("OpenAI", "https://api.openai.com/v1", "gpt-4.1-mini"),
-    ("Meta", "https://api.meta.ai/v1", "muse-spark-1.2-contributor"),
+    ("Meta", "https://api.meta.ai/v1", "muse-spark-1.2"),
     ("Other", "", ""),
 ];
 
@@ -5652,6 +5682,24 @@ impl HarnessApp {
                             egui::TextEdit::singleline(&mut ep.api_base)
                                 .desired_width(row_w - 60.0),
                         );
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label(crate::theme::meta("wire"));
+                        let sel = match ep.wire.as_str() {
+                            "chat" => 1,
+                            "responses" => 2,
+                            _ => 0,
+                        };
+                        if let Some(i) = w::segmented(ui, &["auto", "chat", "responses"], sel) {
+                            ep.wire = match i {
+                                1 => "chat".into(),
+                                2 => "responses".into(),
+                                _ => String::new(),
+                            };
+                        }
+                        ui.label(crate::theme::meta(
+                            "auto = deduzido do host (meta.ai → responses)",
+                        ));
                     });
                 });
             ui.add_space(4.0);

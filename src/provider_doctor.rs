@@ -39,7 +39,7 @@ pub fn builtin_profiles() -> Vec<ProviderProfile> {
             name: "meta".into(),
             api_base: "https://api.meta.ai/v1".into(),
             api_key_env: "MODEL_API_KEY".into(),
-            model: "muse-spark-1.2-contributor".into(),
+            model: "muse-spark-1.2".into(),
             kind: "responses".into(),
         },
         ProviderProfile {

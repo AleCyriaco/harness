@@ -23,8 +23,18 @@ use crate::llm::{ChatMessage, FunctionCall, LlmReply, StreamCb, ToolCall};
 /// Valores do snippet do usuário.
 const TEMPERATURE: f32 = 0.6;
 const TOP_P: f32 = 0.9;
-const MAX_OUTPUT_TOKENS: u32 = 2048;
 const REASONING_EFFORT: &str = "medium";
+
+/// Limite de saída por modelo. muse-spark-1.2 aceita 131072; os demais ficam
+/// em 32768, valor seguro para a maioria dos modelos reasoning. Teto baixo
+/// aqui truncava respostas longas de agente (código, diffs).
+fn max_output_tokens(model: &str) -> u32 {
+    if model.starts_with("muse-spark-1.2") {
+        131_072
+    } else {
+        32_768
+    }
+}
 
 /// Converte o histórico do harness para `input[]` da Responses API.
 pub fn build_input(messages: &[ChatMessage]) -> Vec<Value> {
@@ -84,7 +94,7 @@ pub fn build_body(cfg: &Config, messages: &[ChatMessage], tools: &[Value], strea
         "input": build_input(messages),
         "stream": stream,
         "temperature": TEMPERATURE,
-        "max_output_tokens": MAX_OUTPUT_TOKENS,
+        "max_output_tokens": max_output_tokens(&cfg.model),
         "top_p": TOP_P,
         "reasoning": {"effort": REASONING_EFFORT},
     });
@@ -150,6 +160,23 @@ pub fn apply_event(v: &Value, acc: &mut Acc, mut on_delta: Option<&mut StreamCb>
     }
     if kind == "error" || v.get("error").is_some() {
         acc.last_unknown = Some(v.to_string().chars().take(400).collect());
+        return;
+    }
+    // Terminais além do `completed`: falha (erro do servidor) e incompleta
+    // (estourou max_output_tokens ou filtro de conteúdo). Os dois podem vir
+    // com texto parcial em `response.output` — absorve e registra o motivo.
+    if kind == "response.failed" || kind == "response.incomplete" {
+        if let Some(resp) = v.get("response") {
+            absorb_final(resp, acc);
+            if let Some(msg) = resp.pointer("/error/message").and_then(|m| m.as_str()) {
+                acc.last_unknown = Some(format!("{kind}: {msg}"));
+            } else if let Some(reason) =
+                resp.pointer("/incomplete_details/reason").and_then(|r| r.as_str())
+            {
+                acc.last_unknown = Some(format!("response.incomplete: {reason}"));
+            }
+        }
+        acc.done = true;
         return;
     }
     if kind.ends_with("completed") || kind.ends_with("response.done") {
@@ -450,5 +477,48 @@ mod tests {
             None,
         );
         assert_eq!(into_reply(acc).unwrap().message.content.as_deref(), Some("pronto"));
+    }
+
+    #[test]
+    fn resposta_incompleta_guarda_o_texto_parcial_e_o_motivo() {
+        let mut acc = Acc::default();
+        apply_event(
+            &json!({"type":"response.incomplete","response":{
+                "status":"incomplete",
+                "incomplete_details":{"reason":"max_output_tokens"},
+                "output":[{"type":"message","content":[{"type":"output_text","text":"parcial"}]}]
+            }}),
+            &mut acc,
+            None,
+        );
+        assert!(acc.done);
+        assert!(acc.last_unknown.as_deref().unwrap().contains("max_output_tokens"));
+        let reply = into_reply(acc).unwrap();
+        assert_eq!(reply.message.content.as_deref(), Some("parcial"));
+    }
+
+    #[test]
+    fn resposta_com_falha_vira_erro_com_mensagem_do_servidor() {
+        let mut acc = Acc::default();
+        apply_event(
+            &json!({"type":"response.failed","response":{
+                "status":"failed",
+                "error":{"message":"server overloaded"},
+                "output":[]
+            }}),
+            &mut acc,
+            None,
+        );
+        assert!(acc.done);
+        let err = into_reply(acc).unwrap_err().to_string();
+        assert!(err.contains("server overloaded"), "{err}");
+    }
+
+    #[test]
+    fn teto_de_saida_segue_o_modelo() {
+        assert_eq!(max_output_tokens("muse-spark-1.2"), 131_072);
+        assert_eq!(max_output_tokens("muse-spark-1.2-contributor"), 131_072);
+        assert_eq!(max_output_tokens("muse-spark-1.1"), 32_768);
+        assert_eq!(max_output_tokens("gpt-4.1-mini"), 32_768);
     }
 }

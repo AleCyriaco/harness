@@ -171,6 +171,8 @@ pub fn ensure_pool(cfg: &mut Config) {
         // seed common locals / secondaries with empty keys (user fills in Settings)
         seed_defaults(cfg);
     }
+    // Meta (Muse) aparece para configs antigas também, sem duplicar
+    seed_meta(cfg);
     if cfg.active_llm.is_empty() {
         cfg.active_llm = cfg
             .llm_pool
@@ -187,6 +189,7 @@ pub fn ensure_pool(cfg: &mut Config) {
 }
 
 fn seed_defaults(cfg: &mut Config) {
+    // (nome, base, env1, env2, modelo, prioridade, workers, preço in, preço out)
     let defaults = [
         (
             "grok",
@@ -196,6 +199,8 @@ fn seed_defaults(cfg: &mut Config) {
             "grok-4.5",
             0u32,
             false,
+            0.0,
+            0.0,
         ),
         (
             "openai",
@@ -205,6 +210,8 @@ fn seed_defaults(cfg: &mut Config) {
             "gpt-4.1-mini",
             10,
             false,
+            0.0,
+            0.0,
         ),
         (
             "openrouter",
@@ -214,6 +221,8 @@ fn seed_defaults(cfg: &mut Config) {
             "openai/gpt-4.1-mini",
             20,
             false,
+            0.0,
+            0.0,
         ),
         (
             "ollama",
@@ -223,6 +232,8 @@ fn seed_defaults(cfg: &mut Config) {
             "llama3.2",
             30,
             true,
+            0.0,
+            0.0,
         ),
         (
             "lmstudio",
@@ -232,9 +243,11 @@ fn seed_defaults(cfg: &mut Config) {
             "local-model",
             40,
             true,
+            0.0,
+            0.0,
         ),
     ];
-    for (name, base, env1, env2, model, prio, workers) in defaults {
+    for (name, base, env1, env2, model, prio, workers, price_in, price_out) in defaults {
         if cfg.llm_pool.iter().any(|e| e.name == name) {
             continue;
         }
@@ -260,8 +273,8 @@ fn seed_defaults(cfg: &mut Config) {
         let enabled = !key.is_empty() || name == "ollama" || name == "lmstudio";
         // Don't add disabled cloud without key to reduce noise — add but disabled
         cfg.llm_pool.push(LlmEndpoint {
-            price_in: 0.0,
-            price_out: 0.0,
+            price_in,
+            price_out,
             wire: String::new(),
             name: name.into(),
             api_base: base.into(),
@@ -275,6 +288,35 @@ fn seed_defaults(cfg: &mut Config) {
             use_for_workers: workers,
         });
     }
+}
+
+/// Endpoint Meta (Muse) mesmo em configs antigas. Não duplica se já existir
+/// algum na base meta.ai; só habilita quando há key (env ou já digitada).
+pub fn seed_meta(cfg: &mut Config) {
+    if cfg.llm_pool.iter().any(|e| e.api_base.contains("meta.ai")) {
+        return;
+    }
+    let mut key = std::env::var("MODEL_API_KEY").unwrap_or_default();
+    if key.trim().is_empty() {
+        key = std::env::var("META_API_KEY").unwrap_or_default();
+    }
+    let has_key = !key.trim().is_empty();
+    cfg.llm_pool.push(LlmEndpoint {
+        price_in: 1.25,
+        price_out: 4.25,
+        // vazio = auto; wire_of deduz "responses" pelo host meta.ai
+        wire: String::new(),
+        name: "meta".into(),
+        api_base: "https://api.meta.ai/v1".into(),
+        api_key: key,
+        model: "muse-spark-1.2".into(),
+        enabled: has_key,
+        priority: 5,
+        weight: 50,
+        use_for_code: true,
+        use_for_office: true,
+        use_for_workers: false,
+    });
 }
 
 /// Endpoints usable for a mode (enabled + key + mode flag).
@@ -623,5 +665,20 @@ mod wire_tests {
     fn campo_explicito_vence_o_host() {
         assert_eq!(wire_of("chat", "https://api.meta.ai/v1"), Wire::Chat);
         assert_eq!(wire_of("Responses", "https://qualquer.host/v1"), Wire::Responses);
+    }
+
+    #[test]
+    fn seed_meta_adiciona_endpoint_muse_sem_duplicar() {
+        let mut cfg = crate::config::Config::default();
+        cfg.llm_pool.clear();
+        seed_meta(&mut cfg);
+        let n = cfg.llm_pool.iter().filter(|e| e.name == "meta").count();
+        assert_eq!(n, 1, "primeira chamada cria o endpoint");
+        seed_meta(&mut cfg);
+        let n = cfg.llm_pool.iter().filter(|e| e.api_base.contains("meta.ai")).count();
+        assert_eq!(n, 1, "segunda chamada não duplica");
+        let ep = cfg.llm_pool.iter().find(|e| e.name == "meta").unwrap();
+        assert_eq!(ep.model, "muse-spark-1.2");
+        assert_eq!(wire_of(&ep.wire, &ep.api_base), Wire::Responses);
     }
 }
