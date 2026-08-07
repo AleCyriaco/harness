@@ -36,6 +36,27 @@ pub struct LlmEndpoint {
     /// USD por 1M tokens de saída.
     #[serde(default)]
     pub price_out: f64,
+    /// Protocolo do endpoint: "chat" (padrão) ou "responses".
+    /// Vazio = deduzido do host, para não quebrar config já gravado.
+    #[serde(default)]
+    pub wire: String,
+}
+
+/// Protocolo que um endpoint fala. `api.meta.ai` usa a Responses API, que tem
+/// corpo e eventos diferentes de Chat Completions.
+pub fn wire_of(wire: &str, api_base: &str) -> Wire {
+    match wire.trim().to_ascii_lowercase().as_str() {
+        "responses" => Wire::Responses,
+        "chat" => Wire::Chat,
+        _ if api_base.contains("meta.ai") => Wire::Responses,
+        _ => Wire::Chat,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Wire {
+    Chat,
+    Responses,
 }
 
 /// Preço do endpoint ativo, ou (0,0) quando não configurado.
@@ -69,6 +90,7 @@ impl LlmEndpoint {
             use_for_workers: false,
             price_in: 0.0,
             price_out: 0.0,
+            wire: String::new(),
         }
     }
 
@@ -240,6 +262,7 @@ fn seed_defaults(cfg: &mut Config) {
         cfg.llm_pool.push(LlmEndpoint {
             price_in: 0.0,
             price_out: 0.0,
+            wire: String::new(),
             name: name.into(),
             api_base: base.into(),
             api_key: key,
@@ -582,4 +605,23 @@ pub fn apply_config_view(cfg: &Config) -> Config {
         ep.apply_to(&mut c);
     }
     c
+}
+
+#[cfg(test)]
+mod wire_tests {
+    use super::*;
+
+    #[test]
+    fn meta_e_detectada_pelo_host_sem_config() {
+        // config antigo não tem o campo; o host decide
+        assert_eq!(wire_of("", "https://api.meta.ai/v1"), Wire::Responses);
+        assert_eq!(wire_of("", "https://api.x.ai/v1"), Wire::Chat);
+        assert_eq!(wire_of("", "https://api.openai.com/v1"), Wire::Chat);
+    }
+
+    #[test]
+    fn campo_explicito_vence_o_host() {
+        assert_eq!(wire_of("chat", "https://api.meta.ai/v1"), Wire::Chat);
+        assert_eq!(wire_of("Responses", "https://qualquer.host/v1"), Wire::Responses);
+    }
 }

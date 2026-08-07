@@ -15,6 +15,7 @@ mod hooks;
 mod icon;
 mod llm;
 mod llm_pool;
+mod llm_responses;
 mod mcp;
 mod md;
 mod mem_stats;

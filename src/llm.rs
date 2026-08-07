@@ -91,6 +91,32 @@ pub fn chat(
             continue;
         }
 
+        // Responses API tem corpo e eventos próprios; adaptador separado.
+        if crate::llm_pool::wire_of(&ep.wire, &try_cfg.api_base)
+            == crate::llm_pool::Wire::Responses
+        {
+            match crate::llm_responses::chat(
+                &try_cfg,
+                messages,
+                tools,
+                cancel,
+                on_delta.as_mut(),
+            ) {
+                Ok(r) => {
+                    crate::llm_pool::set_runtime_active(&ep.name);
+                    return Ok(r);
+                }
+                Err(e) => {
+                    let msg = e.to_string();
+                    if msg.contains("cancelled") {
+                        return Err(e);
+                    }
+                    last_err = msg;
+                    continue;
+                }
+            }
+        }
+
         let result = {
             if try_cfg.stream {
                 match chat_stream(&try_cfg, messages, tools, cancel, on_delta.as_mut()) {

@@ -1895,6 +1895,12 @@ impl HarnessApp {
                                 use_for_office: true,
                                 price_in: 0.0,
                                 price_out: 0.0,
+                                // meta.ai fala Responses API, não Chat Completions
+                                wire: if profile.trim() == "meta" {
+                                    "responses".into()
+                                } else {
+                                    String::new()
+                                },
                                 use_for_workers: profile.trim() == "ollama"
                                     || profile.trim() == "lmstudio",
                             };
@@ -2518,6 +2524,7 @@ impl HarnessApp {
             use_for_workers: false,
             price_in: 0.0,
             price_out: 0.0,
+            wire: String::new(),
         };
         crate::llm_pool::upsert_endpoint(&mut self.cfg, ep);
         self.cfg.active_llm = active;
@@ -5212,10 +5219,11 @@ impl eframe::App for HarnessApp {
 // ---------------------------------------------------------------------------
 
 /// Presets de provedor do wizard de setup.
-const PROVIDERS: [(&str, &str, &str); 3] = [
+const PROVIDERS: [(&str, &str, &str); 4] = [
     ("Grok", "https://api.x.ai/v1", "grok-4.5"),
     ("OpenAI", "https://api.openai.com/v1", "gpt-4.1-mini"),
-    ("Outro", "", ""),
+    ("Meta", "https://api.meta.ai/v1", "muse-spark-1.2-contributor"),
+    ("Other", "", ""),
 ];
 
 impl HarnessApp {
@@ -5314,21 +5322,33 @@ impl HarnessApp {
                 let can_save = !self.draft_workspace.trim().is_empty()
                     && !self.draft_api_key.trim().is_empty();
                 ui.horizontal(|ui| {
-                    if w::primary_button(ui, "Test and continue", can_save).clicked() {
-                        // testa a key antes de fechar
-                        match crate::llm_pool::fetch_remote_models(
-                            self.draft_api_base.trim(),
-                            self.draft_api_key.trim(),
-                        ) {
-                            Ok(models) => {
-                                self.status =
-                                    format!("provider ok · {} models", models.len());
-                                self.apply_settings();
-                                if !self.cfg.needs_setup() {
-                                    self.show_setup = false;
-                                }
+                    let responses_api = crate::llm_pool::wire_of("", self.draft_api_base.trim())
+                        == crate::llm_pool::Wire::Responses;
+                    let btn = if responses_api { "Save and continue" } else { "Test and continue" };
+                    if w::primary_button(ui, btn, can_save).clicked() {
+                        if responses_api {
+                            // A Responses API não expõe /models; não dá para
+                            // testar a key sem gastar uma chamada de verdade.
+                            self.status = "provider saved (key checked on first message)".into();
+                            self.apply_settings();
+                            if !self.cfg.needs_setup() {
+                                self.show_setup = false;
                             }
-                            Err(e) => self.push_error(format!("provider: {e}")),
+                        } else {
+                            match crate::llm_pool::fetch_remote_models(
+                                self.draft_api_base.trim(),
+                                self.draft_api_key.trim(),
+                            ) {
+                                Ok(models) => {
+                                    self.status =
+                                        format!("provider ok · {} models", models.len());
+                                    self.apply_settings();
+                                    if !self.cfg.needs_setup() {
+                                        self.show_setup = false;
+                                    }
+                                }
+                                Err(e) => self.push_error(format!("provider: {e}")),
+                            }
                         }
                     }
                     ui.label(crate::theme::meta("the rest you can set later in ⌘K"));
@@ -5558,6 +5578,15 @@ impl HarnessApp {
                     ui.horizontal(|ui| {
                         ui.checkbox(&mut ep.enabled, "");
                         ui.label(crate::theme::mono_medium(ep.name.clone(), 12.0));
+                        if crate::llm_pool::wire_of(&ep.wire, &ep.api_base)
+                            == crate::llm_pool::Wire::Responses
+                        {
+                            ui.label(crate::theme::meta("responses"))
+                                .on_hover_text(
+                                    "Speaks the Responses API (input[]/SSE events), \
+                                     not Chat Completions",
+                                );
+                        }
                         let share = if ep.enabled {
                             ep.weight.max(1) as f32 / total as f32
                         } else {

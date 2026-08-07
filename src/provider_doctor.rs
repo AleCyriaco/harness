@@ -36,6 +36,13 @@ pub fn builtin_profiles() -> Vec<ProviderProfile> {
             kind: "openai".into(),
         },
         ProviderProfile {
+            name: "meta".into(),
+            api_base: "https://api.meta.ai/v1".into(),
+            api_key_env: "MODEL_API_KEY".into(),
+            model: "muse-spark-1.2-contributor".into(),
+            kind: "responses".into(),
+        },
+        ProviderProfile {
             name: "openrouter".into(),
             api_base: "https://openrouter.ai/api/v1".into(),
             api_key_env: "OPENROUTER_API_KEY".into(),
