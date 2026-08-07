@@ -327,6 +327,7 @@ enum CmdAction {
     ToggleUsage,
     PinUsage,
     Project,
+    ResetAllChats,
 }
 
 pub struct HarnessApp {
@@ -396,6 +397,8 @@ pub struct HarnessApp {
     rename_buf: String,
     /// Confirmação de apagar: (id, título, pasta do chat).
     delete_target: Option<(String, String, String)>,
+    /// Confirmação do reset (apagar TODOS os chats).
+    confirm_reset: bool,
     /// Painel de uso: visível agora e fixado (persistido em Config).
     show_usage: bool,
     meter: TokenMeter,
@@ -509,6 +512,7 @@ impl HarnessApp {
             rename_id: None,
             rename_buf: String::new(),
             delete_target: None,
+            confirm_reset: false,
             show_usage: cfg_usage_pinned,
             meter: TokenMeter::new(),
             started_at: std::time::Instant::now(),
@@ -1198,6 +1202,197 @@ impl HarnessApp {
             self.delete_target = None;
         } else if close || esc {
             self.delete_target = None;
+        }
+    }
+
+    /// Apaga TODOS os chats: vivos (daemon, delete_disk) + salvos no disco.
+    /// Depois abre um chat novo. Não passa por `persist()`/`new_session()` —
+    /// eles regravariam o chat atual (apagado) no disco.
+    fn reset_all_chats(&mut self) {
+        if self.busy
+            || self.open_tabs.iter().any(|t| t.busy)
+            || self.daemon_live.iter().any(|s| s.busy)
+        {
+            self.push_error("stop the running agents before deleting all chats".into());
+            return;
+        }
+        // ids a apagar: vivos ∪ salvos (sem repetir)
+        let mut ids: Vec<String> = self.daemon_live.iter().map(|s| s.id.clone()).collect();
+        for m in &self.session_list {
+            let id = if !m.daemon_session_id.is_empty() {
+                m.daemon_session_id.clone()
+            } else {
+                m.id.clone()
+            };
+            if !id.is_empty() && !ids.contains(&id) {
+                ids.push(id);
+            }
+        }
+        for id in &ids {
+            let live = self.daemon_live.iter().any(|s| &s.id == id);
+            let mut ok = false;
+            if live {
+                ok = self
+                    .daemon
+                    .as_ref()
+                    .map(|c| c.kill_session(id, true).is_ok())
+                    .unwrap_or(false);
+            }
+            if !ok {
+                let _ = session::delete_session(id);
+            }
+        }
+        self.open_tabs.clear();
+        self.active_tab = 0;
+        // chat novo: via daemon quando conectado, senão local
+        let mut created = false;
+        if let Some(client) = &self.daemon {
+            match client.create_session(self.mode, None, None) {
+                Ok((id, chat_dir, title)) => {
+                    let sess = Session::from_daemon(
+                        id,
+                        chat_dir,
+                        title,
+                        self.mode,
+                        &self.cfg.workspace,
+                    );
+                    self.messages = sess
+                        .ui_log
+                        .iter()
+                        .map(|l| UiMessage {
+                            role: l.role.clone(),
+                            text: l.text.clone(),
+                        })
+                        .collect();
+                    self.artifacts = scan_artifacts(&sess.chat_path(), self.mode);
+                    let _ = session::save_session(&sess);
+                    self.session = sess;
+                    self.llm_history = Vec::new();
+                    self.input.clear();
+                    self.stream_buf.clear();
+                    self.pending_approval = None;
+                    self.status =
+                        format!("daemon · 📁 {}", self.session.meta.chat_folder_name);
+                    created = true;
+                }
+                Err(e) => self.push_error(format!("new session after reset: {e}")),
+            }
+        }
+        if !created {
+            let sess = Session::new(self.mode, &self.cfg.workspace);
+            self.messages = sess
+                .ui_log
+                .iter()
+                .map(|l| UiMessage {
+                    role: l.role.clone(),
+                    text: l.text.clone(),
+                })
+                .collect();
+            self.artifacts = scan_artifacts(&sess.chat_path(), self.mode);
+            let _ = session::save_session(&sess);
+            self.session = sess;
+            self.llm_history = Vec::new();
+            self.input.clear();
+            self.stream_buf.clear();
+            self.pending_approval = None;
+        }
+        self.session_list = session::list_sessions().unwrap_or_default();
+        self.refresh_daemon_sessions();
+        self.status = format!("{} chats deleted · fresh start", ids.len());
+    }
+
+    /// Confirmação do reset — nada é apagado sem o segundo clique.
+    fn reset_window(&mut self, ctx: &egui::Context) {
+        if !self.confirm_reset {
+            return;
+        }
+        let p = pal();
+        // contagem prévia (o closure abaixo pede &mut self)
+        let mut ids: std::collections::BTreeSet<String> =
+            self.daemon_live.iter().map(|s| s.id.clone()).collect();
+        for m in &self.session_list {
+            let id = if !m.daemon_session_id.is_empty() {
+                m.daemon_session_id.clone()
+            } else {
+                m.id.clone()
+            };
+            if !id.is_empty() {
+                ids.insert(id);
+            }
+        }
+        let count = ids.len();
+        let busy_count = self.daemon_live.iter().filter(|s| s.busy).count();
+        let mut close = false;
+        let mut confirm = false;
+        egui::Window::new("reset")
+            .title_bar(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, -60.0])
+            .default_width(460.0)
+            .frame(crate::theme::card_frame().inner_margin(egui::Margin::same(18)))
+            .show(ctx, |ui| {
+                ui.set_width(430.0);
+                ui.label(crate::theme::ui_medium("Delete ALL chats?", 16.0).color(p.text));
+                ui.add_space(8.0);
+                ui.add(
+                    egui::Label::new(
+                        egui::RichText::new(format!("{count} chats will be deleted."))
+                            .size(13.0)
+                            .color(p.text_dim),
+                    )
+                    .wrap(),
+                );
+                ui.add_space(10.0);
+                ui.horizontal(|ui| {
+                    w::dot(ui, p.error, 3.0);
+                    ui.label(
+                        egui::RichText::new(
+                            "Every conversation is gone — this cannot be undone.",
+                        )
+                        .size(12.5)
+                        .color(p.text_dim),
+                    );
+                });
+                ui.horizontal(|ui| {
+                    w::dot(ui, p.ok, 3.0);
+                    ui.label(
+                        egui::RichText::new("Generated files stay in their chat folders.")
+                            .size(12.5)
+                            .color(p.text_dim),
+                    );
+                });
+                if busy_count > 0 {
+                    ui.add_space(6.0);
+                    ui.horizontal(|ui| {
+                        w::dot(ui, p.accent, 3.0);
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "{busy_count} agent(s) still running — stop them first."
+                            ))
+                            .size(12.5)
+                            .color(p.accent),
+                        );
+                    });
+                }
+                ui.add_space(14.0);
+                ui.horizontal(|ui| {
+                    if w::chip(ui, "Cancel").clicked() {
+                        close = true;
+                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if w::danger_button(ui, "Delete all").clicked() {
+                            confirm = true;
+                        }
+                    });
+                });
+            });
+
+        let esc = ctx.input(|i| i.key_pressed(egui::Key::Escape));
+        if confirm {
+            self.confirm_reset = false;
+            self.reset_all_chats();
+        } else if close || esc {
+            self.confirm_reset = false;
         }
     }
 
@@ -2816,6 +3011,18 @@ impl HarnessApp {
                             .clicked()
                         {
                             self.refresh_daemon_sessions();
+                        }
+                        if ui
+                            .add(
+                                egui::Button::new(
+                                    egui::RichText::new("🗑").size(12.0).color(p.muted),
+                                )
+                                .frame(false),
+                            )
+                            .on_hover_text("Delete ALL chats (asks first)")
+                            .clicked()
+                        {
+                            self.confirm_reset = true;
                         }
                         ui.label(crate::theme::meta(format!("{running} running")));
                     });
@@ -4804,6 +5011,11 @@ impl HarnessApp {
             CmdAction::DeleteCurrent,
         );
         push(
+            "Reset: delete ALL chats…".into(),
+            "asks for confirmation".into(),
+            CmdAction::ResetAllChats,
+        );
+        push(
             "Chat: rename…".into(),
             "/rename <title>".into(),
             CmdAction::RenameCurrent,
@@ -4974,6 +5186,9 @@ impl HarnessApp {
             CmdAction::DeleteCurrent => {
                 let id = self.active_session_key();
                 self.ask_delete(&id);
+            }
+            CmdAction::ResetAllChats => {
+                self.confirm_reset = true;
             }
             CmdAction::RenameCurrent => {
                 self.rename_buf = self.session.meta.title.clone();
@@ -5223,6 +5438,7 @@ impl eframe::App for HarnessApp {
         self.setup_window(ctx);
         self.settings_window(ctx);
         self.delete_window(ctx);
+        self.reset_window(ctx);
         self.command_palette(ctx);
     }
 
