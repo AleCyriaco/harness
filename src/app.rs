@@ -6467,6 +6467,8 @@ fn summary_title(s: &SessionSummary) -> String {
 }
 
 fn meta_title(m: &SessionMeta) -> String {
+    // list_sessions() já aplica display_title (resumo de 5 palavras) no meta;
+    // aqui é só o fallback para o carimbo da pasta quando veio vazio.
     if m.title.is_empty() || m.title == "New session" {
         if m.chat_folder_name.is_empty() {
             m.id.chars().take(8).collect()

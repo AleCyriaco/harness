@@ -156,7 +156,7 @@ impl Session {
         if !self.meta.title_locked
             && (self.meta.title == "New session" || self.meta.title.starts_with("Session "))
         {
-            let t: String = user_text.chars().take(48).collect();
+            let t = summarize_words(user_text, 5);
             self.meta.title = if t.is_empty() {
                 format!(
                     "{} · {}",
@@ -222,8 +222,10 @@ pub fn is_placeholder_title(t: &str) -> bool {
             && t.chars().take(8).all(|c| c.is_ascii_digit()))
 }
 
-fn summarize(line: &str, max: usize) -> String {
-    let first = line
+/// Primeira linha sem marcadores, limitada a `max_words` palavras —
+/// o título curto que aparece na lista de chats.
+pub fn summarize_words(text: &str, max_words: usize) -> String {
+    let first = text
         .lines()
         .map(str::trim)
         .find(|l| !l.is_empty())
@@ -231,16 +233,16 @@ fn summarize(line: &str, max: usize) -> String {
     let clean = first
         .trim_start_matches(['#', '*', '-', '>', '`', ' '])
         .trim();
-    let out: String = clean.chars().take(max).collect();
-    if clean.chars().count() > max {
-        format!("{out}…")
-    } else {
-        out
+    let words: Vec<&str> = clean.split_whitespace().collect();
+    if words.len() <= max_words {
+        return clean.to_string();
     }
+    format!("{}…", words[..max_words].join(" "))
 }
 
-/// Título para exibir: o do usuário quando existe, senão um resumo do log.
-/// Usado na lista salva e também no daemon (sessões vivas passam por aqui).
+/// Título para exibir: o do usuário quando existe, senão um resumo do log
+/// (primeira linha, máx. 5 palavras). Usado na lista salva e também no
+/// daemon (sessões vivas passam por aqui).
 pub fn display_title(s: &Session) -> String {
     if !is_placeholder_title(&s.meta.title) {
         return s.meta.title.clone();
@@ -260,7 +262,7 @@ fn derive_title(s: &Session) -> Option<String> {
         .iter()
         .find(|l| l.role == "user")
         .or_else(|| s.ui_log.iter().find(|l| l.role == "assistant"))?;
-    let t = summarize(&pick.text, 46);
+    let t = summarize_words(&pick.text, 5);
     if t.is_empty() {
         None
     } else {
@@ -337,7 +339,20 @@ pub fn list_sessions() -> Result<Vec<SessionMeta>> {
     Ok(out)
 }
 
+/// Chat sem pergunta/resposta ainda não gera arquivo — não há o que gravar.
+pub fn has_content(session: &Session) -> bool {
+    !session.messages.is_empty()
+        || session
+            .ui_log
+            .iter()
+            .any(|l| l.role == "user" || l.role == "assistant")
+}
+
 pub fn save_session(session: &Session) -> Result<()> {
+    if !has_content(session) {
+        // chat recém-criado / vazio: sem log no disco até haver conteúdo
+        return Ok(());
+    }
     let dir = sessions_dir()?;
     let path = dir.join(format!("{}.json", session.meta.id));
     let raw = serde_json::to_string_pretty(session)?;
@@ -444,7 +459,73 @@ mod tests {
                 ("assistant", "vou olhar"),
             ],
         );
-        assert_eq!(display_title(&s), "refatora o tokenizer pra aceitar unicode");
+        // resumo limitado a 5 palavras
+        assert_eq!(display_title(&s), "refatora o tokenizer pra aceitar…");
+    }
+
+    #[test]
+    fn titulo_curto_nao_passa_de_cinco_palavras() {
+        let s = sess(
+            "New session",
+            &[("user", "um dois três quatro cinco seis sete")],
+        );
+        assert_eq!(display_title(&s), "um dois três quatro cinco…");
+
+        // menos de 5 palavras fica inteiro
+        let curta = sess("New session", &[("user", "apenas três palavras")]);
+        assert_eq!(display_title(&curta), "apenas três palavras");
+
+        // marcadores de markdown saem antes do resumo
+        let md = sess("New session", &[("user", "# conserta o build quebrado")]);
+        assert_eq!(display_title(&md), "conserta o build quebrado");
+    }
+
+    #[test]
+    fn chat_vazio_nao_conta_como_conteudo() {
+        // só boas-vindas (system) → nada para gravar
+        let vazio = sess("New session", &[("system", "welcome")]);
+        assert!(!has_content(&vazio));
+
+        let com_pergunta = sess("t", &[("system", "welcome"), ("user", "oi")]);
+        assert!(has_content(&com_pergunta));
+
+        let com_resposta = sess("t", &[("system", "welcome"), ("assistant", "olá")]);
+        assert!(has_content(&com_resposta));
+
+        // histórico do LLM sozinho também conta
+        let mut so_historico = sess("t", &[("system", "welcome")]);
+        so_historico.messages.push(ChatMessage {
+            role: "user".into(),
+            content: Some("oi".into()),
+            tool_calls: None,
+            tool_call_id: None,
+            name: None,
+        });
+        assert!(has_content(&so_historico));
+    }
+
+    /// Chat vazio grava nada no disco. A parte que "com conteúdo grava" é
+    /// coberta por `cache_da_lista_invalida_ao_gravar`; aqui só verificamos o
+    /// skip (que retorna antes de qualquer I/O, então roda até sem permissão).
+    #[test]
+    fn chat_sem_conteudo_nao_gera_arquivo() {
+        let id = format!("test-empty-{}", uuid::Uuid::new_v4());
+        let mut s = sess("New session", &[("system", "welcome")]);
+        s.meta.id = id.clone();
+        // sem pergunta/resposta → save_session retorna sem tocar no disco
+        assert!(save_session(&s).is_ok());
+        if let Ok(dir) = sessions_dir() {
+            // (em sistemas reais; na sandbox o create_dir_all pode falhar)
+            let json = dir.join(format!("{id}.json"));
+            assert!(!json.exists(), "chat vazio não devia gerar arquivo");
+        }
+        // agora ganha conteúdo → vira um save comum (gravado em sistemas reais)
+        s.ui_log.push(UiLogLine {
+            role: "user".into(),
+            text: "primeira pergunta".into(),
+        });
+        assert!(has_content(&s));
+        let _ = delete_session(&id);
     }
 
     #[test]
