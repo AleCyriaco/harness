@@ -5670,11 +5670,16 @@ impl HarnessApp {
                         ui.label(crate::theme::meta("model"));
                         ui.add(egui::TextEdit::singleline(&mut ep.model).desired_width(130.0));
                         ui.label(crate::theme::meta("key"));
-                        ui.add(
+                        let key_resp = ui.add(
                             egui::TextEdit::singleline(&mut ep.api_key)
                                 .desired_width(110.0)
                                 .password(true),
                         );
+                        // colar a key já habilita o endpoint
+                        // (ex.: o meta é semeado desligado sem env key)
+                        if key_resp.changed() && !ep.api_key.trim().is_empty() {
+                            ep.enabled = true;
+                        }
                     });
                     ui.horizontal(|ui| {
                         ui.label(crate::theme::meta("base"));
