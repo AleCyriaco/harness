@@ -1487,6 +1487,19 @@ impl HarnessApp {
         self.session_list = session::list_sessions().unwrap_or_default();
     }
 
+    /// Novo chat pelo botão/⌘N. Só abre uma sessão nova quando o chat atual
+    /// já tem conteúdo — vazio (sem pergunta/resposta) não gera linha nova
+    /// na lista nem sessão extra no daemon.
+    fn new_chat(&mut self) {
+        if session::has_content(&self.session) {
+            self.new_session();
+        } else {
+            // segue no mesmo chat vazio, só limpa o rascunho
+            self.input.clear();
+            self.stream_buf.clear();
+        }
+    }
+
     fn new_session(&mut self) {
         // Allow a new tab even if the current tab is busy (multi-session).
         if !self.cfg.workspace_ready {
@@ -2792,7 +2805,7 @@ impl HarnessApp {
             self.toggle_theme(ctx);
         }
         if new_chat {
-            self.new_session();
+            self.new_chat();
         }
         if esc {
             if self.cmdk {
@@ -2967,7 +2980,7 @@ impl HarnessApp {
                         .min_size(egui::vec2(ui.available_width(), 33.0)),
                 );
                 if new_chat.on_hover_text("⌘N").clicked() {
-                    self.new_session();
+                    self.new_chat();
                 }
                 ui.add_space(6.0);
 
@@ -2987,6 +3000,11 @@ impl HarnessApp {
                             self.daemon_live.iter().map(|s| s.id.as_str()).collect();
                         let mut rows: Vec<Row> = Vec::new();
                         for s in &self.daemon_live {
+                            // chat recém-criado sem mensagens não vira linha da
+                            // lista — só aparece depois da primeira pergunta
+                            if s.history_msgs == 0 && !s.busy {
+                                continue;
+                            }
                             rows.push(Row {
                                 id: s.id.clone(),
                                 title: summary_title(s),
@@ -5082,7 +5100,7 @@ impl HarnessApp {
             }
             CmdAction::Go(d) => self.dest = d,
             CmdAction::OpenSettings => self.show_settings = true,
-            CmdAction::NewChat => self.new_session(),
+            CmdAction::NewChat => self.new_chat(),
             CmdAction::TokenLess(l) => self.set_token_less(l),
             CmdAction::PinCurrent => {
                 let id = self.active_session_key();
