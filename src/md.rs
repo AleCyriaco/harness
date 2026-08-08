@@ -9,8 +9,8 @@ const BODY: f32 = 14.5;
 /// Ação acionada por um clique no texto renderizado.
 #[derive(Debug, Clone, PartialEq)]
 pub enum MdAction {
-    /// Copiar o link para o clipboard.
-    CopyLink(String),
+    /// Copiar o texto (bloco/link) para o clipboard.
+    CopyText(String),
     /// Executar o comando (bloco ```sh/bash) e mostrar a saída no chat.
     RunCommand(String),
 }
@@ -23,14 +23,16 @@ pub fn render_markdown(ui: &mut Ui, text: &str) -> Option<MdAction> {
     let mut lang = String::new();
     let mut action: Option<MdAction> = None;
 
+    let mut take = |a: Option<MdAction>| {
+        if action.is_none() {
+            action = a;
+        }
+    };
+
     for line in text.lines() {
         if line.trim_start().starts_with("```") {
             if in_code {
-                if action.is_none() {
-                    action = code_block(ui, &lang, code_buf.trim_end());
-                } else {
-                    code_block(ui, &lang, code_buf.trim_end());
-                }
+                take(code_block(ui, &lang, code_buf.trim_end()));
                 code_buf.clear();
                 in_code = false;
                 ui.add_space(6.0);
@@ -53,70 +55,69 @@ pub fn render_markdown(ui: &mut Ui, text: &str) -> Option<MdAction> {
         }
         if let Some(rest) = t.strip_prefix("### ") {
             let owned = rest.to_string();
-            text_block(ui, &owned, |ui| {
+            take(text_block(ui, &owned, |ui| {
                 ui.label(RichText::new(&owned).strong().size(14.5).color(pal().text));
-            });
+                None
+            }));
         } else if let Some(rest) = t.strip_prefix("## ") {
             let owned = rest.to_string();
-            text_block(ui, &owned, |ui| {
+            take(text_block(ui, &owned, |ui| {
                 ui.label(RichText::new(&owned).strong().size(15.5).color(pal().text));
-            });
+                None
+            }));
         } else if let Some(rest) = t.strip_prefix("# ") {
             let owned = rest.to_string();
-            text_block(ui, &owned, |ui| {
+            take(text_block(ui, &owned, |ui| {
                 ui.label(RichText::new(&owned).strong().size(17.0).color(pal().text));
-            });
+                None
+            }));
         } else if let Some(rest) = t.strip_prefix("- ") {
             let owned = rest.to_string();
-            text_block(ui, &owned, |ui| {
+            take(text_block(ui, &owned, |ui| {
                 ui.horizontal_wrapped(|ui| {
                     ui.label(RichText::new("•").color(pal().muted));
-                    if action.is_none() {
-                        action = render_inline(ui, &owned);
-                    } else {
-                        render_inline(ui, &owned);
-                    }
                 });
-            });
+                render_inline(ui, &owned)
+            }));
         } else if let Some(rest) = t.strip_prefix("* ") {
             let owned = rest.to_string();
-            text_block(ui, &owned, |ui| {
+            take(text_block(ui, &owned, |ui| {
                 ui.horizontal_wrapped(|ui| {
                     ui.label(RichText::new("•").color(pal().muted));
-                    if action.is_none() {
-                        action = render_inline(ui, &owned);
-                    } else {
-                        render_inline(ui, &owned);
-                    }
                 });
-            });
+                render_inline(ui, &owned)
+            }));
         } else {
             let owned = t.to_string();
-            text_block(ui, &owned, |ui| {
-                if action.is_none() {
-                    action = render_inline(ui, &owned);
-                } else {
-                    render_inline(ui, &owned);
-                }
-            });
+            take(text_block(ui, &owned, |ui| render_inline(ui, &owned)));
         }
     }
-    if in_code && !code_buf.is_empty() && action.is_none() {
-        action = code_block(ui, &lang, code_buf.trim_end());
+    if in_code && !code_buf.is_empty() {
+        take(code_block(ui, &lang, code_buf.trim_end()));
     }
     action
 }
 
 /// Um bloco de texto com um pequeno ícone ⧉ à direita que copia o bloco
-/// inteiro. O texto quebra normalmente; o botão fica no canto da 1ª linha.
-fn text_block(ui: &mut Ui, copy_text: &str, content: impl FnOnce(&mut Ui)) {
+/// inteiro (devolve a ação para o app dar feedback). O texto quebra
+/// normalmente; o botão fica no canto da 1ª linha.
+fn text_block(
+    ui: &mut Ui,
+    copy_text: &str,
+    content: impl FnOnce(&mut Ui) -> Option<MdAction>,
+) -> Option<MdAction> {
+    let mut action = None;
     ui.horizontal(|ui| {
         let w = (ui.available_width() - 24.0).max(120.0);
         ui.allocate_ui_with_layout(
             egui::vec2(w, 0.0),
             egui::Layout::top_down(egui::Align::LEFT),
             |ui| {
-                content(ui);
+                if action.is_none() {
+                    action = content(ui);
+                } else {
+                    content(ui);
+                }
             },
         );
         let btn = ui
@@ -126,9 +127,10 @@ fn text_block(ui: &mut Ui, copy_text: &str, content: impl FnOnce(&mut Ui)) {
             )
             .on_hover_text("Copy this block");
         if btn.clicked() {
-            ui.ctx().copy_text(copy_text.to_string());
+            action = Some(MdAction::CopyText(copy_text.to_string()));
         }
     });
+    action
 }
 
 /// Bloco de código: cabeçalho com a linguagem, botão de copiar e — para
@@ -323,7 +325,7 @@ fn render_inline(ui: &mut Ui, text: &str) -> Option<MdAction> {
                     .on_hover_text("Click to copy");
                 if resp.clicked() {
                     ui.ctx().copy_text(url_owned.clone());
-                    action = Some(MdAction::CopyLink(url_owned));
+                    action = Some(MdAction::CopyText(url_owned));
                 }
                 rest = &rest[i + consumed..];
                 continue;

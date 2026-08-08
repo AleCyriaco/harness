@@ -3896,9 +3896,9 @@ impl HarnessApp {
         }
         if let Some(action) = md_action {
             match action {
-                md::MdAction::CopyLink(url) => {
-                    ui.ctx().copy_text(url.clone());
-                    self.status = format!("copied: {url}");
+                md::MdAction::CopyText(text) => {
+                    ui.ctx().copy_text(text.clone());
+                    self.status = format!("copied ({})", text.chars().take(60).collect::<String>());
                 }
                 md::MdAction::RunCommand(cmd) => {
                     self.run_chat_command(cmd);
