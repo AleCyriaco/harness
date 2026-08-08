@@ -52,41 +52,83 @@ pub fn render_markdown(ui: &mut Ui, text: &str) -> Option<MdAction> {
             continue;
         }
         if let Some(rest) = t.strip_prefix("### ") {
-            ui.label(RichText::new(rest).strong().size(14.5).color(pal().text));
+            let owned = rest.to_string();
+            text_block(ui, &owned, |ui| {
+                ui.label(RichText::new(&owned).strong().size(14.5).color(pal().text));
+            });
         } else if let Some(rest) = t.strip_prefix("## ") {
-            ui.label(RichText::new(rest).strong().size(15.5).color(pal().text));
+            let owned = rest.to_string();
+            text_block(ui, &owned, |ui| {
+                ui.label(RichText::new(&owned).strong().size(15.5).color(pal().text));
+            });
         } else if let Some(rest) = t.strip_prefix("# ") {
-            ui.label(RichText::new(rest).strong().size(17.0).color(pal().text));
+            let owned = rest.to_string();
+            text_block(ui, &owned, |ui| {
+                ui.label(RichText::new(&owned).strong().size(17.0).color(pal().text));
+            });
         } else if let Some(rest) = t.strip_prefix("- ") {
-            ui.horizontal_wrapped(|ui| {
-                ui.label(RichText::new("•").color(pal().muted));
-                if action.is_none() {
-                    action = render_inline(ui, rest);
-                } else {
-                    render_inline(ui, rest);
-                }
+            let owned = rest.to_string();
+            text_block(ui, &owned, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(RichText::new("•").color(pal().muted));
+                    if action.is_none() {
+                        action = render_inline(ui, &owned);
+                    } else {
+                        render_inline(ui, &owned);
+                    }
+                });
             });
         } else if let Some(rest) = t.strip_prefix("* ") {
-            ui.horizontal_wrapped(|ui| {
-                ui.label(RichText::new("•").color(pal().muted));
-                if action.is_none() {
-                    action = render_inline(ui, rest);
-                } else {
-                    render_inline(ui, rest);
-                }
+            let owned = rest.to_string();
+            text_block(ui, &owned, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(RichText::new("•").color(pal().muted));
+                    if action.is_none() {
+                        action = render_inline(ui, &owned);
+                    } else {
+                        render_inline(ui, &owned);
+                    }
+                });
             });
         } else {
-            if action.is_none() {
-                action = render_inline(ui, t);
-            } else {
-                render_inline(ui, t);
-            }
+            let owned = t.to_string();
+            text_block(ui, &owned, |ui| {
+                if action.is_none() {
+                    action = render_inline(ui, &owned);
+                } else {
+                    render_inline(ui, &owned);
+                }
+            });
         }
     }
     if in_code && !code_buf.is_empty() && action.is_none() {
         action = code_block(ui, &lang, code_buf.trim_end());
     }
     action
+}
+
+/// Um bloco de texto com um pequeno ícone ⧉ à direita que copia o bloco
+/// inteiro. O texto quebra normalmente; o botão fica no canto da 1ª linha.
+fn text_block(ui: &mut Ui, copy_text: &str, content: impl FnOnce(&mut Ui)) {
+    ui.horizontal(|ui| {
+        let w = (ui.available_width() - 24.0).max(120.0);
+        ui.allocate_ui_with_layout(
+            egui::vec2(w, 0.0),
+            egui::Layout::top_down(egui::Align::LEFT),
+            |ui| {
+                content(ui);
+            },
+        );
+        let btn = ui
+            .add(
+                egui::Button::new(RichText::new("⧉").size(11.0).color(pal().muted))
+                    .frame(false),
+            )
+            .on_hover_text("Copy this block");
+        if btn.clicked() {
+            ui.ctx().copy_text(copy_text.to_string());
+        }
+    });
 }
 
 /// Bloco de código: cabeçalho com a linguagem, botão de copiar e — para
@@ -260,7 +302,8 @@ fn render_inline(ui: &mut Ui, text: &str) -> Option<MdAction> {
     let mut action = None;
     ui.horizontal_wrapped(|ui| {
         while !rest.is_empty() {
-            // link http(s)://… — clicável, copia para o clipboard
+            // link http(s)://… — botão clicável, copia para o clipboard.
+            // Button em vez de Label: labels selecionáveis engolem o clique.
             if let Some(i) = find_url(rest) {
                 if i > 0 {
                     ui.label(RichText::new(&rest[..i]).size(BODY).color(pal().text));
@@ -269,13 +312,13 @@ fn render_inline(ui: &mut Ui, text: &str) -> Option<MdAction> {
                 let url_owned = url.to_string();
                 let resp = ui
                     .add(
-                        egui::Label::new(
+                        egui::Button::new(
                             RichText::new(url)
                                 .size(BODY)
                                 .underline()
                                 .color(pal().accent),
                         )
-                        .sense(egui::Sense::click()),
+                        .frame(false),
                     )
                     .on_hover_text("Click to copy");
                 if resp.clicked() {
