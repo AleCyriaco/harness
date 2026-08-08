@@ -3827,6 +3827,26 @@ impl HarnessApp {
                                                 },
                                             );
                                             ui.vertical(|ui| {
+                                                ui.horizontal(|ui| {
+                                                    if ui
+                                                        .add(
+                                                            egui::Button::new(
+                                                                egui::RichText::new("copy")
+                                                                    .monospace()
+                                                                    .size(9.5)
+                                                                    .color(p.muted),
+                                                            )
+                                                            .frame(false),
+                                                        )
+                                                        .on_hover_text(
+                                                            "Copy this answer (select any text with the mouse to copy a part)",
+                                                        )
+                                                        .clicked()
+                                                    {
+                                                        ui.ctx().copy_text(msg.text.clone());
+                                                        self.status = "answer copied".into();
+                                                    }
+                                                });
                                                 if md_action.is_none() {
                                                     md_action = md::render_markdown(ui, &msg.text);
                                                 } else {

@@ -183,7 +183,8 @@ pub fn apply(ctx: &egui::Context) {
     style.spacing.item_spacing = egui::vec2(8.0, 8.0);
     style.spacing.button_padding = egui::vec2(11.0, 6.0);
     style.spacing.indent = 14.0;
-    style.interaction.selectable_labels = false;
+    // Selecionar texto com o mouse + ⌘C para copiar qualquer trecho do chat.
+    style.interaction.selectable_labels = true;
 
     ctx.set_style(style);
 }
