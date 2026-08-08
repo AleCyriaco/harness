@@ -180,7 +180,7 @@ fn code_block(ui: &mut Ui, lang: &str, code: &str) -> Option<MdAction> {
                         )
                         .clicked()
                     {
-                        ui.ctx().copy_text(code.to_string());
+                        action = Some(MdAction::CopyText(code.to_string()));
                     }
                 });
             });
