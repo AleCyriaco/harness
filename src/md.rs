@@ -53,33 +53,17 @@ pub fn render_markdown(ui: &mut Ui, text: &str) -> Option<MdAction> {
             ui.add_space(5.0);
             continue;
         }
-        if let Some(rest) = t.strip_prefix("### ") {
+        // cyrix: um arm só para os 3 níveis de heading — só muda o size
+        let heading = t.strip_prefix("### ").map(|r| (r, 14.5))
+            .or_else(|| t.strip_prefix("## ").map(|r| (r, 15.5)))
+            .or_else(|| t.strip_prefix("# ").map(|r| (r, 17.0)));
+        if let Some((rest, size)) = heading {
             let owned = rest.to_string();
             take(text_block(ui, &owned, |ui| {
-                ui.label(RichText::new(&owned).strong().size(14.5).color(pal().text));
+                ui.label(RichText::new(&owned).strong().size(size).color(pal().text));
                 None
             }));
-        } else if let Some(rest) = t.strip_prefix("## ") {
-            let owned = rest.to_string();
-            take(text_block(ui, &owned, |ui| {
-                ui.label(RichText::new(&owned).strong().size(15.5).color(pal().text));
-                None
-            }));
-        } else if let Some(rest) = t.strip_prefix("# ") {
-            let owned = rest.to_string();
-            take(text_block(ui, &owned, |ui| {
-                ui.label(RichText::new(&owned).strong().size(17.0).color(pal().text));
-                None
-            }));
-        } else if let Some(rest) = t.strip_prefix("- ") {
-            let owned = rest.to_string();
-            take(text_block(ui, &owned, |ui| {
-                ui.horizontal_wrapped(|ui| {
-                    ui.label(RichText::new("•").color(pal().muted));
-                });
-                render_inline(ui, &owned)
-            }));
-        } else if let Some(rest) = t.strip_prefix("* ") {
+        } else if let Some(rest) = t.strip_prefix("- ").or_else(|| t.strip_prefix("* ")) {
             let owned = rest.to_string();
             take(text_block(ui, &owned, |ui| {
                 ui.horizontal_wrapped(|ui| {
@@ -324,7 +308,6 @@ fn render_inline(ui: &mut Ui, text: &str) -> Option<MdAction> {
                     )
                     .on_hover_text("Click to copy");
                 if resp.clicked() {
-                    ui.ctx().copy_text(url_owned.clone());
                     action = Some(MdAction::CopyText(url_owned));
                 }
                 rest = &rest[i + consumed..];
