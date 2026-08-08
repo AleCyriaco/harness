@@ -3925,8 +3925,7 @@ impl HarnessApp {
             .arg(&cmd)
             .current_dir(&cwd)
             .output();
-        let mut out = String::new();
-        let ok = match output {
+        let (ok, out) = match output {
             Ok(o) => {
                 let mut s = String::new();
                 if !o.stdout.is_empty() {
@@ -3938,8 +3937,7 @@ impl HarnessApp {
                     }
                     s.push_str(&String::from_utf8_lossy(&o.stderr));
                 }
-                out = s;
-                o.status.success()
+                (o.status.success(), s)
             }
             Err(e) => {
                 self.push_error(format!("run: {e}"));
