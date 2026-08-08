@@ -3681,6 +3681,7 @@ impl HarnessApp {
 
         let mut approve: Option<ApprovalDecision> = None;
         let mut open_file: Option<PathBuf> = None;
+        let mut md_action: Option<md::MdAction> = None;
 
         egui::ScrollArea::vertical()
             .stick_to_bottom(true)
@@ -3826,7 +3827,11 @@ impl HarnessApp {
                                                 },
                                             );
                                             ui.vertical(|ui| {
-                                                md::render_markdown(ui, &msg.text);
+                                                if md_action.is_none() {
+                                                    md_action = md::render_markdown(ui, &msg.text);
+                                                } else {
+                                                    md::render_markdown(ui, &msg.text);
+                                                }
                                             });
                                         });
                                     }
@@ -3869,6 +3874,81 @@ impl HarnessApp {
         if let Some(path) = open_file.take() {
             self.open_preview(path);
         }
+        if let Some(action) = md_action {
+            match action {
+                md::MdAction::CopyLink(url) => {
+                    ui.ctx().copy_text(url.clone());
+                    self.status = format!("copied: {url}");
+                }
+                md::MdAction::RunCommand(cmd) => {
+                    self.run_chat_command(cmd);
+                }
+            }
+        }
+    }
+
+    /// Roda um comando do bloco ```sh/bash no diretório do chat e mostra a
+    /// saída como mensagem no próprio chat.
+    fn run_chat_command(&mut self, cmd: String) {
+        if self.busy {
+            self.push_error("agent is running — stop it before running a command".into());
+            return;
+        }
+        let cwd = self.session.chat_path();
+        let label = cmd.chars().take(90).collect::<String>();
+        self.messages.push(UiMessage {
+            role: "tool".into(),
+            text: format!("▶ {}", label),
+        });
+        let output = std::process::Command::new("sh")
+            .arg("-lc")
+            .arg(&cmd)
+            .current_dir(&cwd)
+            .output();
+        let mut out = String::new();
+        let ok = match output {
+            Ok(o) => {
+                let mut s = String::new();
+                if !o.stdout.is_empty() {
+                    s.push_str(&String::from_utf8_lossy(&o.stdout));
+                }
+                if !o.stderr.is_empty() {
+                    if !s.is_empty() {
+                        s.push('\n');
+                    }
+                    s.push_str(&String::from_utf8_lossy(&o.stderr));
+                }
+                out = s;
+                o.status.success()
+            }
+            Err(e) => {
+                self.push_error(format!("run: {e}"));
+                return;
+            }
+        };
+        let trimmed = out.trim();
+        if trimmed.is_empty() {
+            self.messages.push(UiMessage {
+                role: "system".into(),
+                text: format!(
+                    "{} command finished {} — no output",
+                    if ok { "✓" } else { "✗" },
+                    if ok { "clean" } else { "with error" }
+                ),
+            });
+        } else {
+            let cap = trimmed.chars().take(24_000).collect::<String>();
+            let extra = if trimmed.chars().count() > 24_000 {
+                format!("\n…[{} chars truncated]", trimmed.chars().count() - 24_000)
+            } else {
+                String::new()
+            };
+            self.messages.push(UiMessage {
+                role: if ok { "system".into() } else { "error".into() },
+                text: format!("```\n{cap}{extra}\n```"),
+            });
+        }
+        self.status = format!("command {} — {}", if ok { "ok" } else { "failed" }, label);
     }
 
     fn files_view(&mut self, ui: &mut egui::Ui) {
@@ -6494,10 +6574,27 @@ fn render_preview(ui: &mut egui::Ui, p: &PreviewContent) {
         } => {
             ui.heading(egui::RichText::new(format!("🌐 {title}")).size(18.0));
             ui.label(
-                egui::RichText::new("Rendered in harness WebView window")
+                egui::RichText::new("Opened in the harness WebView window")
                     .size(13.0)
                     .weak(),
             );
+            if let Some(st) = ui
+                .add(
+                    egui::Button::new(
+                        egui::RichText::new(format!("▶ Run  {title}")).size(15.0).strong(),
+                    )
+                    .min_size(egui::vec2(220.0, 34.0)),
+                )
+                .on_hover_text("Re-open the game / page in the internal WebView")
+                .clicked()
+                .then_some(())
+            {
+                if let Err(e) = browser::open_in_app(url) {
+                    // free fn sem push_error — o status global carrega o erro
+                    let _ = e;
+                }
+                let _ = st;
+            }
             ui.label(egui::RichText::new(path).size(12.0).monospace());
             ui.label(egui::RichText::new(url).size(12.0).monospace().strong());
             ui.horizontal(|ui| {

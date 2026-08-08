@@ -6,17 +6,31 @@ use crate::theme::pal;
 
 const BODY: f32 = 14.5;
 
+/// Ação acionada por um clique no texto renderizado.
+#[derive(Debug, Clone, PartialEq)]
+pub enum MdAction {
+    /// Copiar o link para o clipboard.
+    CopyLink(String),
+    /// Executar o comando (bloco ```sh/bash) e mostrar a saída no chat.
+    RunCommand(String),
+}
+
 /// Render a subset of markdown: headings, bold, bullets, code fences, bare lines.
-pub fn render_markdown(ui: &mut Ui, text: &str) {
+pub fn render_markdown(ui: &mut Ui, text: &str) -> Option<MdAction> {
     let text = crate::mermaid_lite::expand_in_markdown(text);
     let mut in_code = false;
     let mut code_buf = String::new();
     let mut lang = String::new();
+    let mut action: Option<MdAction> = None;
 
     for line in text.lines() {
         if line.trim_start().starts_with("```") {
             if in_code {
-                code_block(ui, &lang, code_buf.trim_end());
+                if action.is_none() {
+                    action = code_block(ui, &lang, code_buf.trim_end());
+                } else {
+                    code_block(ui, &lang, code_buf.trim_end());
+                }
                 code_buf.clear();
                 in_code = false;
                 ui.add_space(6.0);
@@ -46,25 +60,40 @@ pub fn render_markdown(ui: &mut Ui, text: &str) {
         } else if let Some(rest) = t.strip_prefix("- ") {
             ui.horizontal_wrapped(|ui| {
                 ui.label(RichText::new("•").color(pal().muted));
-                render_inline(ui, rest);
+                if action.is_none() {
+                    action = render_inline(ui, rest);
+                } else {
+                    render_inline(ui, rest);
+                }
             });
         } else if let Some(rest) = t.strip_prefix("* ") {
             ui.horizontal_wrapped(|ui| {
                 ui.label(RichText::new("•").color(pal().muted));
-                render_inline(ui, rest);
+                if action.is_none() {
+                    action = render_inline(ui, rest);
+                } else {
+                    render_inline(ui, rest);
+                }
             });
         } else {
-            render_inline(ui, t);
+            if action.is_none() {
+                action = render_inline(ui, t);
+            } else {
+                render_inline(ui, t);
+            }
         }
     }
-    if in_code && !code_buf.is_empty() {
-        code_block(ui, &lang, code_buf.trim_end());
+    if in_code && !code_buf.is_empty() && action.is_none() {
+        action = code_block(ui, &lang, code_buf.trim_end());
     }
+    action
 }
 
-/// Bloco de código: cabeçalho com a linguagem e botão de copiar, corpo realçado.
-fn code_block(ui: &mut Ui, lang: &str, code: &str) {
+/// Bloco de código: cabeçalho com a linguagem, botão de copiar e — para
+/// comandos shell — botão ▶ Executar.
+fn code_block(ui: &mut Ui, lang: &str, code: &str) -> Option<MdAction> {
     let p = pal();
+    let mut action = None;
     egui::Frame::new()
         .fill(p.code_bg)
         .corner_radius(8.0)
@@ -78,6 +107,26 @@ fn code_block(ui: &mut Ui, lang: &str, code: &str) {
                         .color(p.muted),
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let runnable = is_shell_lang(lang);
+                    if runnable {
+                        let btn = ui
+                            .add(
+                                egui::Button::new(
+                                    RichText::new("▶ run").monospace().size(10.0).color(p.ok),
+                                )
+                                .frame(false),
+                            )
+                            .on_hover_text("Run this command and show the output");
+                        if btn.clicked() {
+                            action = Some(MdAction::RunCommand(code.to_string()));
+                        }
+                        ui.label(
+                            RichText::new("·")
+                                .monospace()
+                                .size(10.0)
+                                .color(p.muted),
+                        );
+                    }
                     if ui
                         .add(
                             egui::Button::new(
@@ -102,6 +151,14 @@ fn code_block(ui: &mut Ui, lang: &str, code: &str) {
                 });
             }
         });
+    action
+}
+
+fn is_shell_lang(lang: &str) -> bool {
+    matches!(
+        lang.trim().to_ascii_lowercase().as_str(),
+        "sh" | "bash" | "zsh" | "shell" | "console" | "terminal"
+    )
 }
 
 /// Realce por linha, sem dependência: comentário, string, número, palavra-chave.
@@ -198,10 +255,36 @@ fn keywords(lang: &str) -> &'static [&'static str] {
     }
 }
 
-fn render_inline(ui: &mut Ui, text: &str) {
+fn render_inline(ui: &mut Ui, text: &str) -> Option<MdAction> {
     let mut rest = text;
+    let mut action = None;
     ui.horizontal_wrapped(|ui| {
         while !rest.is_empty() {
+            // link http(s)://… — clicável, copia para o clipboard
+            if let Some(i) = find_url(rest) {
+                if i > 0 {
+                    ui.label(RichText::new(&rest[..i]).size(BODY).color(pal().text));
+                }
+                let (url, consumed) = take_url(&rest[i..]);
+                let url_owned = url.to_string();
+                let resp = ui
+                    .add(
+                        egui::Label::new(
+                            RichText::new(url)
+                                .size(BODY)
+                                .underline()
+                                .color(pal().accent),
+                        )
+                        .sense(egui::Sense::click()),
+                    )
+                    .on_hover_text("Click to copy");
+                if resp.clicked() {
+                    ui.ctx().copy_text(url_owned.clone());
+                    action = Some(MdAction::CopyLink(url_owned));
+                }
+                rest = &rest[i + consumed..];
+                continue;
+            }
             if let Some(i) = rest.find("**") {
                 if i > 0 {
                     ui.label(RichText::new(&rest[..i]).size(BODY).color(pal().text));
@@ -237,6 +320,32 @@ fn render_inline(ui: &mut Ui, text: &str) {
             }
         }
     });
+    action
+}
+
+/// Índice do início do primeiro URL `http://` ou `https://` na string.
+fn find_url(s: &str) -> Option<usize> {
+    let mut idx = 0;
+    let bytes = s.as_bytes();
+    while idx + 8 <= bytes.len() {
+        if bytes[idx..].starts_with(b"http://") || bytes[idx..].starts_with(b"https://") {
+            return Some(idx);
+        }
+        idx += 1;
+    }
+    None
+}
+
+/// Consome um URL a partir do início; devolve (fatia, bytes consumidos).
+fn take_url(s: &str) -> (&str, usize) {
+    let end = s
+        .char_indices()
+        .find(|(i, c)| {
+            *i > 0 && matches!(c, ' ' | '\t' | '\n' | ')' | ']' | '}' | '"' | '\'' | ',')
+        })
+        .map(|(i, _)| i)
+        .unwrap_or(s.len());
+    (&s[..end], end)
 }
 
 #[cfg(test)]
@@ -268,5 +377,29 @@ mod tests {
         let out = highlight("brainfuck", line);
         let joined: String = out.iter().map(|(t, _)| t.as_str()).collect();
         assert_eq!(joined, line);
+    }
+
+    #[test]
+    fn acha_url_no_meio_do_texto() {
+        assert_eq!(find_url("veja https://example.com/x agora"), Some(5));
+        assert_eq!(find_url("sem link aqui"), None);
+        assert_eq!(find_url("http://a.io"), Some(0));
+    }
+
+    #[test]
+    fn take_url_para_antes_do_espaco_ou_pontuacao() {
+        let (u, n) = take_url("https://example.com/x) resto");
+        assert_eq!(u, "https://example.com/x");
+        assert_eq!(n, "https://example.com/x".len());
+        let (u2, _) = take_url("https://a.io");
+        assert_eq!(u2, "https://a.io");
+    }
+
+    #[test]
+    fn bloco_shell_e_reconhecido() {
+        assert!(is_shell_lang("sh"));
+        assert!(is_shell_lang("bash"));
+        assert!(is_shell_lang(" shell "));
+        assert!(!is_shell_lang("rust"));
     }
 }
