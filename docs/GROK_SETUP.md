@@ -1,35 +1,35 @@
-# Testar harness com Grok (xAI)
+# Running harness with Grok (xAI)
 
-A API do Grok é **compatível com OpenAI** (`/v1/chat/completions`).
+The Grok API is **OpenAI-compatible** (`/v1/chat/completions`).
 
-## Dados
+## Facts
 
-| Campo | Valor |
+| Field | Value |
 |--------|--------|
 | Base URL | `https://api.x.ai/v1` |
-| Model (ex.) | `grok-4.5` (ou o id listado no console) |
-| API key | em [console.x.ai](https://console.x.ai) |
+| Model (e.g.) | `grok-4.5` (or whatever id your console lists) |
+| API key | [console.x.ai](https://console.x.ai) |
 | Env | `XAI_API_KEY` |
 
-## Opção A — variável de ambiente (recomendado)
+## Option A — environment variable (recommended)
 
 ```bash
-export XAI_API_KEY="xai-..."   # sua chave
-cd /caminho/para/harness
+export XAI_API_KEY="xai-..."   # your key
+cd /path/to/harness
 cargo run --release
 ```
 
-Com `XAI_API_KEY` definida, o harness preenche base/model se a key do config estiver vazia.
+With `XAI_API_KEY` set, harness fills in base/model when the config key is empty.
 
-## Opção B — Settings no app
+## Option B — Settings in the app
 
-1. Abra **Settings**
+1. Open **Settings**
 2. Base URL: `https://api.x.ai/v1`
-3. API key: cole a chave xAI
-4. Model: `grok-4.5` (ou outro disponível na sua conta)
+3. API key: paste the xAI key
+4. Model: `grok-4.5` (or another one available to your account)
 5. **Save**
 
-## Opção C — config.toml
+## Option C — config.toml
 
 macOS:
 
@@ -41,10 +41,9 @@ api_key = "xai-..."
 model = "grok-4.5"
 ```
 
-## Smoke test da API (sem o app)
+## API smoke test (without the app)
 
 ```bash
-export XAI_API_KEY="xai-..."
 curl -s https://api.x.ai/v1/chat/completions \
   -H "Authorization: Bearer $XAI_API_KEY" \
   -H "Content-Type: application/json" \
@@ -55,24 +54,25 @@ curl -s https://api.x.ai/v1/chat/completions \
   }'
 ```
 
-Se a resposta contiver `HARNESS_OK`, a key está ok.
+If the reply contains `HARNESS_OK`, the key works.
 
-## Modelos
+## Models
 
-Os ids mudam com o tempo. Confira em:
+Ids change over time. Check:
 
-- https://docs.x.ai  
-- https://console.x.ai  
+- https://docs.x.ai
+- https://console.x.ai
 
-Se `grok-4.5` der 404, liste modelos:
+If `grok-4.5` returns 404, list the models:
 
 ```bash
-curl -s https://api.x.ai/v1/models \
-  -H "Authorization: Bearer $XAI_API_KEY" | head
+curl -s https://api.x.ai/v1/models -H "Authorization: Bearer $XAI_API_KEY" | head
 ```
 
-E ajuste `model` no Settings.
+and adjust `model` in Settings.
 
 ## Tools / function calling
 
-O harness usa tools no estilo OpenAI. A maioria dos modelos Grok recentes suporta; se o agent “só conversar” sem criar arquivos, troque o model no console (preferir flagship/coding).
+harness uses OpenAI-style tools. Most recent Grok models support them; if the
+agent only chats and never creates files, switch to a flagship/coding model in
+the console.

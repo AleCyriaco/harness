@@ -61,6 +61,9 @@ pub enum ClientMsg {
         /// Ausente = daemon mantém o que já sabia da sessão.
         #[serde(default, alias = "caveman")]
         token_less: Option<String>,
+        /// Gauntlet Loop deste chat. Ausente = daemon mantém o que sabia.
+        #[serde(default)]
+        gauntlet: Option<bool>,
     },
     Cancel {
         session_id: String,

@@ -388,6 +388,8 @@ pub struct HarnessApp {
     server_port: String,
     /// Estado do swarm vindo do daemon (é lá que os workers rodam).
     swarm_snap: crate::swarm::SwarmSnapshot,
+    /// Auto-continues já gastos no objetivo atual do Gauntlet Loop.
+    gauntlet_iter: u32,
     metrics: crate::metrics::Metrics,
     graph_stats: crate::graph::GraphStats,
     graph_query: String,
@@ -505,6 +507,7 @@ impl HarnessApp {
             server_path: ".".into(),
             server_port: web_port.to_string(),
             swarm_snap: crate::swarm::SwarmSnapshot::default(),
+            gauntlet_iter: 0,
             metrics: crate::metrics::Metrics::default(),
             graph_stats: crate::graph::GraphStats::default(),
             graph_query: String::new(),
@@ -1408,6 +1411,44 @@ impl HarnessApp {
         self.status = format!("token less cost: {}", level.tag());
     }
 
+    /// Fim de turno com Gauntlet Loop: reenvia sozinho enquanto a resposta não
+    /// trouxer o marcador. Ler o toggle aqui é o que faz desligá-lo interromper.
+    fn gauntlet_tick(&mut self, reply: &str) {
+        use crate::gauntlet::{next_step, Stop, CONTINUE_MESSAGE};
+        let on = self.session.meta.gauntlet;
+        let max = self.cfg.gauntlet_max_iterations;
+        match next_step(on, reply, self.gauntlet_iter, max) {
+            None if !on => {}
+            None => {
+                self.gauntlet_iter += 1;
+                // o rascunho do usuário volta depois: o laço não pode comê-lo
+                let draft = std::mem::replace(&mut self.input, CONTINUE_MESSAGE.into());
+                self.send_user_message();
+                self.input = draft;
+                self.status = format!("gauntlet {}/{max} · running…", self.gauntlet_iter);
+            }
+            Some(Stop::Done) => {
+                self.gauntlet_iter = 0;
+                self.status = "gauntlet loop: done".into();
+            }
+            Some(Stop::Exhausted) => {
+                self.gauntlet_iter = 0;
+                self.status = format!("gauntlet loop: stopped at {max} iterations");
+            }
+        }
+    }
+
+    fn set_gauntlet(&mut self, on: bool) {
+        self.session.meta.gauntlet = on;
+        self.gauntlet_iter = 0;
+        self.persist();
+        self.status = if on {
+            format!("gauntlet loop on · max {}", self.cfg.gauntlet_max_iterations)
+        } else {
+            "gauntlet loop off".into()
+        };
+    }
+
     fn swarm_running(&self) -> usize {
         self.swarm_snap
             .agents
@@ -1857,8 +1898,11 @@ impl HarnessApp {
             name: None,
         });
 
+        if text != crate::gauntlet::CONTINUE_MESSAGE {
+            self.gauntlet_iter = 0;
+        }
         let token_less = self.session.meta.token_less.unwrap_or(self.cfg.token_less);
-        if let Err(e) = client.user_message(&sid, &text, Some(token_less)) {
+        if let Err(e) = client.user_message(&sid, &text, Some(token_less), Some(self.session.meta.gauntlet)) {
             self.push_error(format!("daemon send: {e}"));
             return;
         }
@@ -2483,6 +2527,7 @@ impl HarnessApp {
         }
 
         if done {
+            let last_reply = final_reply.clone().unwrap_or_default();
             if let Some(reply) = final_reply {
                 if self
                     .messages
@@ -2525,6 +2570,9 @@ impl HarnessApp {
             self.persist();
             self.pack_active_tab();
             self.refresh_mem_stats(true);
+            if !cancelled {
+                self.gauntlet_tick(&last_reply);
+            }
         } else if self.busy || self.open_tabs.iter().any(|t| t.busy) {
             ctx.request_repaint_after(std::time::Duration::from_millis(33));
         }
@@ -2818,13 +2866,13 @@ impl HarnessApp {
         }
     }
 
-    /// Rail vertical de 60px — cinco destinos + Web/Server + engrenagem.
+    /// Rail vertical de 68px — cinco destinos + Web/Server + engrenagem.
     fn rail(&mut self, ctx: &egui::Context) {
         let p = pal();
         let swarm_workers = self.swarm_running();
         let any_busy = self.busy || self.open_tabs.iter().any(|t| t.busy);
         egui::SidePanel::left("rail")
-            .exact_width(60.0)
+            .exact_width(68.0)
             .resizable(false)
             .frame(
                 egui::Frame::new()
@@ -2836,7 +2884,7 @@ impl HarnessApp {
                 ui.vertical_centered(|ui| {
                     // marca
                     let (logo, _) =
-                        ui.allocate_exact_size(egui::vec2(28.0, 28.0), egui::Sense::hover());
+                        ui.allocate_exact_size(egui::vec2(32.0, 32.0), egui::Sense::hover());
                     crate::icon::paint_mark(ui.painter(), logo);
                     ui.add_space(14.0);
 
@@ -2880,12 +2928,12 @@ impl HarnessApp {
                     let gear = ui
                         .add(
                             egui::Button::new(
-                                egui::RichText::new("⚙").size(12.0).color(p.muted),
+                                egui::RichText::new("⚙").size(14.0).color(p.muted),
                             )
                             .fill(p.card)
                             .stroke(egui::Stroke::new(1.0, p.border))
-                            .corner_radius(egui::CornerRadius::same(7))
-                            .min_size(egui::vec2(26.0, 26.0)),
+                            .corner_radius(egui::CornerRadius::same(8))
+                            .min_size(egui::vec2(30.0, 30.0)),
                         )
                         .on_hover_text("Settings");
                     if gear.clicked() {
@@ -3231,6 +3279,18 @@ impl HarnessApp {
                             .size(10.5)
                             .color(dot_c),
                     );
+                    if self.session.meta.gauntlet {
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "gauntlet {}/{}",
+                                self.gauntlet_iter, self.cfg.gauntlet_max_iterations
+                            ))
+                            .monospace()
+                            .size(10.5)
+                            .color(p.accent),
+                        )
+                        .on_hover_text("Auto-continues spent on this goal.");
+                    }
 
                     let workers = self.swarm_running();
                     if workers > 0 {
@@ -3503,25 +3563,7 @@ impl HarnessApp {
                                     } else {
                                         "token less".to_string()
                                     };
-                                    let tlc_chip = ui.add(
-                                        egui::Button::new(
-                                            egui::RichText::new(chip_txt)
-                                                .monospace()
-                                                .size(11.5)
-                                                .color(if tlc.is_on() {
-                                                    p.accent
-                                                } else {
-                                                    p.muted
-                                                }),
-                                        )
-                                        .fill(egui::Color32::TRANSPARENT)
-                                        .stroke(egui::Stroke::new(
-                                            1.0,
-                                            if tlc.is_on() { p.accent } else { p.border_soft },
-                                        ))
-                                        .corner_radius(egui::CornerRadius::same(7))
-                                        .min_size(egui::vec2(0.0, 24.0)),
-                                    );
+                                    let tlc_chip = w::pill_toggle(ui, &chip_txt, tlc.is_on());
                                     if tlc_chip
                                         .on_hover_text(
                                             "Token Less Cost — resposta comprimida neste chat. \
@@ -3532,6 +3574,21 @@ impl HarnessApp {
                                         .clicked()
                                     {
                                         self.set_token_less(tlc.next());
+                                    }
+                                    let g_on = self.session.meta.gauntlet;
+                                    if w::pill_toggle(ui, "gauntlet loop", g_on)
+                                        .on_hover_text(format!(
+                                            "Gauntlet Loop — the agent splits the goal, \
+                                             critiques each part and redoes what fails.\n\
+                                             Auto-sends \"{}\" until the reply carries {} \
+                                             or {} iterations are spent. Turning it off stops it.",
+                                            crate::gauntlet::CONTINUE_MESSAGE,
+                                            crate::gauntlet::DONE_MARKER,
+                                            self.cfg.gauntlet_max_iterations,
+                                        ))
+                                        .clicked()
+                                    {
+                                        self.set_gauntlet(!g_on);
                                     }
                                     if w::chip(ui, "+ file")
                                         .on_hover_text("Attach a file path to the message")

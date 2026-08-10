@@ -38,6 +38,9 @@ pub struct SessionMeta {
     /// Projeto que este chat edita. `None` = o agente fica na pasta do chat.
     #[serde(default)]
     pub project_dir: Option<String>,
+    /// Gauntlet Loop ligado neste chat.
+    #[serde(default)]
+    pub gauntlet: bool,
     /// Título posto à mão — o auto-título da primeira mensagem não o sobrescreve.
     #[serde(default)]
     pub title_locked: bool,
@@ -77,6 +80,7 @@ impl Session {
                 token_less: None,
                 pinned: false,
                 project_dir: None,
+                gauntlet: false,
                 title_locked: false,
             },
             messages: Vec::new(),
@@ -118,6 +122,7 @@ impl Session {
                 token_less: None,
                 pinned: false,
                 project_dir: None,
+                gauntlet: false,
                 title_locked: false,
             },
             messages: Vec::new(),
@@ -414,6 +419,22 @@ pub fn delete_session(id: &str) -> Result<()> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn gauntlet_sobrevive_ao_disco_e_a_chat_antigo() {
+        let mut s = sess("t", &[("user", "oi")]);
+        s.meta.gauntlet = true;
+        // mesmo caminho de serialização de save_session/load_session
+        let raw = serde_json::to_string(&s).unwrap();
+        let back: Session = serde_json::from_str(&raw).unwrap();
+        assert!(back.meta.gauntlet, "toggle tem que voltar ligado do disco");
+
+        // chat gravado antes deste campo existir não pode falhar ao carregar
+        let old = raw.replace(r#""gauntlet":true,"#, "");
+        assert!(!old.contains("gauntlet"));
+        let legacy: Session = serde_json::from_str(&old).unwrap();
+        assert!(!legacy.meta.gauntlet);
+    }
+
     fn sess(title: &str, log: &[(&str, &str)]) -> Session {
         Session {
             meta: SessionMeta {
@@ -428,6 +449,7 @@ mod tests {
                 token_less: None,
                 pinned: false,
                 project_dir: None,
+                gauntlet: false,
                 title_locked: false,
             },
             messages: Vec::new(),

@@ -1,5 +1,20 @@
 # jcode ↔ harness parity (v0.4+)
 
+## Beyond parity, added in 0.5
+
+| Feature | Status |
+|---------|--------|
+| **Token Less Cost** — output compression per chat (off/lite/full/ultra) | ✅ composer pill + `/tokenless` |
+| **Structural graph** — symbols/imports/refs/clusters in SQLite, per session | ✅ `graph_*` + `/graph` |
+| **Impact analysis** — what breaks if a symbol changes | ✅ `graph_impact` |
+| **Gauntlet Loop** — directive + auto-continue until `[GAUNTLET:DONE]` | ✅ composer pill + status counter |
+| **Per-chat project folder** — agent works in a real codebase, writes ask first | ✅ `/project` |
+| **Responses API** wire (Meta Muse) alongside Chat Completions | ✅ auto-detected by host |
+| Weighted LLM rotation + auto-failover across a pool | ✅ `/llm` |
+| Usage panel — live sent/received token charts, cache, cost by origin | ✅ pinnable |
+| Versioned skills (save keeps the previous copy) | ✅ `skill_versions` |
+| Chat management — rename, pin, delete, summarized titles, ⌘K search | ✅ |
+
 ## Now implemented (or substantially improved)
 
 ### Architecture / runtime

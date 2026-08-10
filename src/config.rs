@@ -53,6 +53,13 @@ pub struct Config {
     /// Aparência: Paper (claro) ou Ember (escuro). Alterna com ⇧⌘D.
     #[serde(default)]
     pub theme: crate::theme::ThemeMode,
+    /// Gauntlet Loop ligado neste turno. Vive no chat, não no config.toml —
+    /// o daemon copia do `LiveSession` para o `cfg` do turno.
+    #[serde(skip)]
+    pub gauntlet: bool,
+    /// Teto de auto-continues do Gauntlet Loop por objetivo.
+    #[serde(default = "default_gauntlet_max")]
+    pub gauntlet_max_iterations: u32,
     /// Painel de uso fixo (abre junto com o app).
     #[serde(default)]
     pub usage_pinned: bool,
@@ -106,6 +113,9 @@ fn default_web_port() -> u16 {
 fn default_max_sessions() -> usize {
     32
 }
+fn default_gauntlet_max() -> u32 {
+    crate::gauntlet::DEFAULT_MAX_ITERATIONS
+}
 fn default_rotate_minutes() -> u32 {
     60
 }
@@ -145,6 +155,8 @@ impl Default for Config {
             mode: AppMode::Code,
             theme: crate::theme::ThemeMode::default(),
             usage_pinned: false,
+            gauntlet: false,
+            gauntlet_max_iterations: default_gauntlet_max(),
             token_less: crate::tokenless::TokenLessLevel::default(),
             history_cap: default_history_cap(),
             tool_result_cap: default_tool_result_cap(),
@@ -226,6 +238,10 @@ impl Config {
             cfg.max_sessions = default_max_sessions();
         }
         cfg.max_sessions = cfg.max_sessions.clamp(1, 256);
+        if cfg.gauntlet_max_iterations == 0 {
+            cfg.gauntlet_max_iterations = default_gauntlet_max();
+        }
+        cfg.gauntlet_max_iterations = cfg.gauntlet_max_iterations.clamp(1, 100);
         if cfg.llm_rotate_minutes == 0 {
             cfg.llm_rotate_minutes = default_rotate_minutes();
         }

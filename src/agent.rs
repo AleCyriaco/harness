@@ -104,6 +104,7 @@ fn run_turn_inner(
 
     let mut sys_content = llm::system_prompt(mode, &cfg.workspace.display().to_string());
     crate::tokenless::apply_to_system(&mut sys_content, cfg.token_less);
+    crate::gauntlet::apply_to_system(&mut sys_content, cfg.gauntlet);
     crate::metrics::set_current_level(cfg.token_less);
     let sys = ChatMessage {
         role: "system".into(),

@@ -364,6 +364,7 @@ fn cli_attach_session(id_or_prefix: &str) -> Result<()> {
                 session_id: session_id.clone(),
                 text: line,
                 token_less: None,
+                gauntlet: None,
             },
         )?;
         loop {
@@ -494,6 +495,7 @@ fn cli_run(prompt: &str, tcp: bool) -> Result<()> {
             session_id: session_id.clone(),
             text: prompt.into(),
             token_less: None,
+            gauntlet: None,
         },
     )?;
     loop {
@@ -619,6 +621,7 @@ fn cli_connect_repl() -> Result<()> {
                 session_id: session_id.clone(),
                 text: line,
                 token_less: None,
+                gauntlet: None,
             },
         )?;
         // drain until done

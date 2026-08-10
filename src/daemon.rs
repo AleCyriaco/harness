@@ -29,6 +29,8 @@ struct LiveSession {
     subscribers: Vec<u64>,
     /// Override de token_less vindo do cliente (por sessão/aba).
     token_less: Option<crate::tokenless::TokenLessLevel>,
+    /// Gauntlet Loop ligado neste chat (o cliente manda a cada mensagem).
+    gauntlet: bool,
 }
 
 struct DaemonState {
@@ -124,6 +126,7 @@ fn restore_sessions_from_disk(state: &mut DaemonState) {
                 approval_tx: None,
                 subscribers: Vec::new(),
                 token_less: None,
+                gauntlet: false,
             },
         );
     }
@@ -411,12 +414,19 @@ fn handle_msg(
             session_id,
             text,
             token_less,
+            gauntlet,
         } => {
-            if let Some(tag) = token_less {
-                if let Some(level) = crate::tokenless::TokenLessLevel::parse(&tag) {
-                    let mut g = state.lock().unwrap();
-                    if let Some(s) = g.sessions.get_mut(&session_id) {
+            if token_less.is_some() || gauntlet.is_some() {
+                let mut g = state.lock().unwrap();
+                if let Some(s) = g.sessions.get_mut(&session_id) {
+                    if let Some(level) = token_less
+                        .as_deref()
+                        .and_then(crate::tokenless::TokenLessLevel::parse)
+                    {
                         s.token_less = Some(level);
+                    }
+                    if let Some(on) = gauntlet {
+                        s.gauntlet = on;
                     }
                 }
             }
@@ -527,6 +537,7 @@ fn create_or_restore(
                     approval_tx: None,
                     subscribers: vec![client_id],
                     token_less: None,
+                    gauntlet: false,
                 },
             );
             drop(g);
@@ -602,6 +613,7 @@ fn create_or_restore(
                 chat_folder_name: folder,
                 daemon_session_id: id,
                 token_less: None,
+                gauntlet: false,
                 pinned: false,
                 project_dir: None,
                 title_locked: false,
@@ -631,6 +643,7 @@ fn create_or_restore(
             approval_tx: None,
             subscribers: vec![client_id],
             token_less: None,
+            gauntlet: false,
         },
     );
     drop(g);
@@ -675,6 +688,7 @@ fn attach_session(
                         approval_tx: None,
                         subscribers: Vec::new(),
                         token_less: None,
+                        gauntlet: false,
                     },
                 );
             }
@@ -852,6 +866,7 @@ fn start_turn(
         if let Some(level) = s.token_less {
             cfg.token_less = level;
         }
+        cfg.gauntlet = s.gauntlet;
         let guard = s.session.meta.project_dir.is_some();
         (cfg, s.mode, s.history.clone(), guard)
     };

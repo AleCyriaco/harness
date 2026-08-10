@@ -1,40 +1,40 @@
-# Testar harness com Meta Model API (Muse)
+# Running harness with the Meta Model API (Muse)
 
-A API `api.meta.ai/v1` fala a **Responses API** (`POST /v1/responses` com
-`input[]`, streaming por eventos SSE) — **não** é Chat Completions. O harness
-detecta pelo host e usa o adaptador `llm_responses` automaticamente.
+`api.meta.ai/v1` speaks the **Responses API** (`POST /v1/responses` with
+`input[]`, SSE event streaming) — it is **not** Chat Completions. harness detects
+it by host and switches to the `llm_responses` adapter automatically.
 
-## Dados
+## Facts
 
-| Campo | Valor |
+| Field | Value |
 |--------|--------|
 | Base URL | `https://api.meta.ai/v1` |
-| Model | `muse-spark-1.2` (1M contexto / 131072 saída, reasoning) |
-| Outros ids | `muse-spark-1.2-contributor`, `muse-spark-1.1` |
-| API key | portal dev.meta.ai ("Meta Model API") |
-| Env | `MODEL_API_KEY` (ou `META_API_KEY`) |
+| Model | `muse-spark-1.2` (1M context / 131072 output, reasoning) |
+| Other ids | `muse-spark-1.2-contributor`, `muse-spark-1.1` |
+| API key | dev.meta.ai portal ("Meta Model API") |
+| Env | `MODEL_API_KEY` (or `META_API_KEY`) |
 
-## Opção A — variável de ambiente (recomendado)
+## Option A — environment variable (recommended)
 
 ```bash
-export MODEL_API_KEY="..."   # sua chave
-cd /caminho/para/harness
+export MODEL_API_KEY="..."   # your key
+cd /path/to/harness
 cargo run --release
 ```
 
-Com `MODEL_API_KEY` definida, o harness semeia o endpoint `meta` no pool
-(`muse-spark-1.2`, wire=responses auto) e já o deixa habilitado.
+With `MODEL_API_KEY` set, harness seeds the `meta` endpoint into the pool
+(`muse-spark-1.2`, wire=responses by detection) and leaves it enabled.
 
-## Opção B — Settings no app
+## Option B — Settings in the app
 
-1. Abra **Settings**
+1. Open **Settings**
 2. Base URL: `https://api.meta.ai/v1`
-3. API key: cole a chave
+3. API key: paste the key
 4. Model: `muse-spark-1.2`
-5. Wire fica em `auto` (meta.ai → responses); se trocar a base, force `responses`
+5. Leave Wire on `auto` (meta.ai → responses); if you change the base URL, force `responses`
 6. **Save**
 
-## Opção C — config.toml
+## Option C — config.toml
 
 macOS: `~/Library/Application Support/sh.harness.harness/config.toml`
 
@@ -48,13 +48,12 @@ name = "meta"
 api_base = "https://api.meta.ai/v1"
 api_key = "..."
 model = "muse-spark-1.2"
-wire = "responses"   # opcional; "auto" deduz pelo host
+wire = "responses"   # optional; "auto" infers it from the host
 ```
 
-## Smoke test da API (sem o app)
+## API smoke test (without the app)
 
 ```bash
-export MODEL_API_KEY="..."
 curl -s https://api.meta.ai/v1/responses \
   -H "Authorization: Bearer $MODEL_API_KEY" \
   -H "Content-Type: application/json" \
@@ -65,16 +64,16 @@ curl -s https://api.meta.ai/v1/responses \
   }' | head -40
 ```
 
-A resposta volta como objeto `{"id":"resp_...","object":"response","output":[...]}`.
-Se `output` contiver o texto `HARNESS_OK`, a key está ok.
+The reply is an object `{"id":"resp_...","object":"response","output":[...]}`.
+If `output` carries the text `HARNESS_OK`, the key works.
 
-> Nota: a Responses API não expõe `/models` confiável; o botão **Modelos…**
-> do pool pode falhar para este endpoint — é esperado. A key só é testada de
-> verdade na primeira mensagem (o Setup avisa quando salva sem testar).
+> Note: the Responses API has no reliable `/models` endpoint, so the pool's
+> **Models…** button may fail here — that is expected. The key is only really
+> exercised on the first message (Setup warns when you save without testing).
 
 ## Wire
 
-O endpoint também registra rota `/chat/completions` (probes retornam 401, não
-404), mas a integração oficial (Codex, `wire_api = "responses"`) e os exemplos
-da comunidade usam `/responses`. Use `responses` (ou `auto`, que deduz pelo
-host meta.ai). Só force `chat` se a Meta publicar compatibilidade completa.
+The endpoint also registers a `/chat/completions` route (probes return 401, not
+404), but the official integration (Codex, `wire_api = "responses"`) and the
+community examples use `/responses`. Use `responses` (or `auto`, which infers it
+from the meta.ai host). Only force `chat` if Meta ships full compatibility.

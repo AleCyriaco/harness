@@ -23,10 +23,10 @@ pub enum Glyph {
 }
 
 fn paint_glyph(painter: &egui::Painter, center: Pos2, g: Glyph, filled: bool, color: Color32) {
-    let s = 11.0_f32;
+    let s = 15.0_f32;
     let half = s * 0.5;
     let rect = Rect::from_center_size(center, Vec2::splat(s));
-    let stroke = Stroke::new(1.5, color);
+    let stroke = Stroke::new(1.7, color);
     match g {
         Glyph::Square => {
             if filled {
@@ -56,15 +56,15 @@ fn paint_glyph(painter: &egui::Painter, center: Pos2, g: Glyph, filled: bool, co
             }
         }
         Glyph::Bar => {
-            let r = Rect::from_center_size(center, Vec2::new(s, 2.0));
+            let r = Rect::from_center_size(center, Vec2::new(s, 2.6));
             painter.rect_filled(r, CornerRadius::same(1), color);
         }
         Glyph::Nodes => {
-            let r = 2.0;
+            let r = 2.7;
             let a = Pos2::new(center.x - half + r, center.y + half - r);
             let b = Pos2::new(center.x + half - r, center.y + half - r);
             let top = Pos2::new(center.x, center.y - half + r);
-            let thin = Stroke::new(1.2, color);
+            let thin = Stroke::new(1.4, color);
             painter.line_segment([a, top], thin);
             painter.line_segment([b, top], thin);
             painter.line_segment([a, b], thin);
@@ -77,7 +77,7 @@ fn paint_glyph(painter: &egui::Painter, center: Pos2, g: Glyph, filled: bool, co
             }
         }
         Glyph::Pulse => {
-            let thin = Stroke::new(1.4, color);
+            let thin = Stroke::new(1.6, color);
             let y = center.y;
             let pts = vec![
                 Pos2::new(center.x - half, y),
@@ -111,7 +111,7 @@ fn paint_glyph(painter: &egui::Painter, center: Pos2, g: Glyph, filled: bool, co
     }
 }
 
-/// Item do rail: 48×44, forma 11px + rótulo mono 8.5.
+/// Item do rail: 54×56, forma 15px + rótulo mono 10.
 pub fn rail_item(
     ui: &mut egui::Ui,
     glyph: Glyph,
@@ -120,7 +120,7 @@ pub fn rail_item(
     dot: bool,
 ) -> Response {
     let p = pal();
-    let (rect, response) = ui.allocate_exact_size(Vec2::new(48.0, 44.0), Sense::click());
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(54.0, 56.0), Sense::click());
     let painter = ui.painter();
     if active {
         painter.rect_filled(rect, CornerRadius::same(9), p.card);
@@ -138,22 +138,22 @@ pub fn rail_item(
     let shape_color = if active { p.accent } else { p.muted };
     paint_glyph(
         painter,
-        Pos2::new(rect.center().x, rect.top() + 14.0),
+        Pos2::new(rect.center().x, rect.top() + 18.0),
         glyph,
         active,
         shape_color,
     );
     painter.text(
-        Pos2::new(rect.center().x, rect.bottom() - 11.0),
+        Pos2::new(rect.center().x, rect.bottom() - 13.0),
         Align2::CENTER_CENTER,
         label,
-        FontId::monospace(8.5),
+        FontId::monospace(10.0),
         fg,
     );
     if dot {
         painter.circle_filled(
-            Pos2::new(rect.right() - 7.0, rect.top() + 6.0),
-            3.0,
+            Pos2::new(rect.right() - 8.0, rect.top() + 7.0),
+            3.4,
             p.accent,
         );
     }
@@ -201,6 +201,20 @@ pub fn chip(ui: &mut egui::Ui, text: &str) -> Response {
         .stroke(Stroke::new(1.0, p.border_soft))
         .corner_radius(CornerRadius::same(7))
         .min_size(Vec2::new(0.0, 24.0)),
+    )
+}
+
+/// `chip` que sabe estar ligado: acende em terracota quando `on`.
+/// Usada pelos toggles do composer (Token Less Cost, Gauntlet Loop).
+pub fn pill_toggle(ui: &mut egui::Ui, text: &str, on: bool) -> Response {
+    let p = pal();
+    let color = if on { p.accent } else { p.muted };
+    ui.add(
+        egui::Button::new(egui::RichText::new(text).monospace().size(11.5).color(color))
+            .fill(Color32::TRANSPARENT)
+            .stroke(Stroke::new(1.0, if on { p.accent } else { p.border_soft }))
+            .corner_radius(CornerRadius::same(7))
+            .min_size(Vec2::new(0.0, 24.0)),
     )
 }
 

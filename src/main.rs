@@ -10,6 +10,7 @@ mod daemon;
 mod daemon_client;
 mod diagnostics;
 mod file_watch;
+mod gauntlet;
 mod graph;
 mod hooks;
 mod icon;

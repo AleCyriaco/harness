@@ -1,0 +1,110 @@
+//! Gauntlet Loop — o agente decompõe o objetivo, critica cada parte e recomeça
+//! até aprovar.
+//!
+//! O laço é deliberadamente burro: injeta uma diretiva no system prompt e, no
+//! fim de cada turno, reenvia "continue o loop" enquanto a resposta não trouxer
+//! o marcador de conclusão. Sem subagente, sem fila, sem processo novo — quem
+//! decompõe e critica é o próprio modelo, dentro do turno.
+
+/// O modelo escreve isto quando considera o objetivo cumprido.
+pub const DONE_MARKER: &str = "[GAUNTLET:DONE]";
+
+/// Mensagem reenviada automaticamente a cada iteração.
+pub const CONTINUE_MESSAGE: &str = "continue o loop";
+
+pub const DEFAULT_MAX_ITERATIONS: u32 = 10;
+
+/// Bloco acrescentado ao system prompt quando o toggle está ligado.
+pub const DIRECTIVE: &str = "\
+GAUNTLET LOOP ATIVO. Decomponha o objetivo em partes avaliáveis
+separadamente. Para cada parte, gere o artefato e depois avalie-o
+em um passo SEPARADO com contexto limpo, como crítico severo,
+comparando contra a referência de qualidade definida pelo usuário.
+Se falhar, liste os defeitos concretos e refaça. Só marque uma
+parte como concluída quando o crítico aprovar.
+
+Quando o objetivo inteiro estiver cumprido e aprovado pelo crítico,
+termine a resposta com o marcador exato [GAUNTLET:DONE].";
+
+/// Acrescenta a diretiva ao system prompt. Não faz nada quando desligado.
+pub fn apply_to_system(content: &mut String, on: bool) {
+    if on {
+        content.push_str("\n\n");
+        content.push_str(DIRECTIVE);
+    }
+}
+
+/// A resposta declara o objetivo cumprido?
+pub fn is_done(reply: &str) -> bool {
+    reply.contains(DONE_MARKER)
+}
+
+/// Por que o laço parou — serve para dizer ao usuário em vez de sumir calado.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stop {
+    /// A resposta trouxe o marcador.
+    Done,
+    /// Bateu o teto de iterações.
+    Exhausted,
+}
+
+/// Decide o que fazer no fim de um turno.
+///
+/// `on` já leva em conta o toggle no instante da decisão, então desligá-lo
+/// interrompe o laço sem precisar de cancelamento em outro lugar.
+pub fn next_step(on: bool, reply: &str, iterations: u32, max: u32) -> Option<Stop> {
+    if !on {
+        return None;
+    }
+    if is_done(reply) {
+        return Some(Stop::Done);
+    }
+    if iterations >= max {
+        return Some(Stop::Exhausted);
+    }
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn desligado_nunca_continua_nem_para() {
+        assert_eq!(next_step(false, "qualquer coisa", 0, 10), None);
+        // mesmo com o marcador: desligado é desligado
+        assert_eq!(next_step(false, DONE_MARKER, 0, 10), None);
+    }
+
+    #[test]
+    fn continua_ate_o_marcador() {
+        // sem marcador e com folga: `None` = continuar
+        assert_eq!(next_step(true, "faltou a parte 2", 3, 10), None);
+        assert_eq!(
+            next_step(true, "tudo certo [GAUNTLET:DONE]", 3, 10),
+            Some(Stop::Done)
+        );
+    }
+
+    #[test]
+    fn teto_de_iteracoes_para_o_laco() {
+        assert_eq!(next_step(true, "ainda não", 9, 10), None);
+        assert_eq!(next_step(true, "ainda não", 10, 10), Some(Stop::Exhausted));
+        // marcador vence o teto: terminou é terminou
+        assert_eq!(next_step(true, DONE_MARKER, 99, 10), Some(Stop::Done));
+    }
+
+    #[test]
+    fn diretiva_so_entra_ligada_e_ensina_o_marcador() {
+        let mut off = "base".to_string();
+        apply_to_system(&mut off, false);
+        assert_eq!(off, "base");
+
+        let mut on = "base".to_string();
+        apply_to_system(&mut on, true);
+        assert!(on.starts_with("base"));
+        assert!(on.contains("GAUNTLET LOOP ATIVO"));
+        // sem isto o modelo nunca sinaliza o fim e o laço só para no teto
+        assert!(on.contains(DONE_MARKER));
+    }
+}
