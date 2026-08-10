@@ -36,6 +36,7 @@ mod session_search;
 mod side_panel;
 mod skills;
 mod slash;
+mod stuck;
 mod swarm;
 mod swarm_plan;
 mod theme;
@@ -43,6 +44,7 @@ mod toolcall;
 mod tools;
 mod ui;
 mod update;
+mod web_extract;
 mod webserver;
 mod webview_win;
 

@@ -537,11 +537,24 @@ fn code_tools() -> Vec<Value> {
         ),
         fn_tool(
             "browser_fetch",
-            "Fetch a URL and return text/HTML preview (no heavy browser engine).",
+            "Fetch a URL and return it as clean markdown (headings, links and code kept; nav/cookie/footer chrome dropped).",
             json!({
                 "type": "object",
                 "properties": {
                     "url": {"type": "string"}
+                },
+                "required": ["url"]
+            }),
+        ),
+        fn_tool(
+            "web_crawl",
+            "Crawl from a URL and return the pages as markdown. Breadth-first, capped by config (max pages/depth, same-domain, robots.txt).",
+            json!({
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string"},
+                    "max_pages": {"type": "integer", "description": "optional, capped by config"},
+                    "max_depth": {"type": "integer", "description": "optional, capped by config"}
                 },
                 "required": ["url"]
             }),
@@ -1383,9 +1396,31 @@ pub fn dispatch(
             crate::browser::open_in_app(url)?;
             Ok(format!("opened {url} in harness WebView"))
         }
+        "web_crawl" => {
+            let url = require_str(&args, "url")?;
+            let cap_pages = cfg.web_crawl_max_pages as usize;
+            let cap_depth = cfg.web_crawl_max_depth as usize;
+            let opts = crate::browser::CrawlOpts {
+                max_pages: args
+                    .get("max_pages")
+                    .and_then(|v| v.as_u64())
+                    .map(|v| (v as usize).min(cap_pages))
+                    .unwrap_or(cap_pages)
+                    .max(1),
+                max_depth: args
+                    .get("max_depth")
+                    .and_then(|v| v.as_u64())
+                    .map(|v| (v as usize).min(cap_depth))
+                    .unwrap_or(cap_depth),
+                same_domain: cfg.web_crawl_same_domain,
+                respect_robots: cfg.web_respect_robots,
+                per_page: (cfg.tool_result_cap / 3).max(1_000),
+            };
+            crate::browser::crawl(url, &opts, cancel)
+        }
         "browser_fetch" => {
             let url = require_str(&args, "url")?;
-            let st = crate::browser::fetch_preview(url)?;
+            let st = crate::browser::fetch_preview(url, cfg.web_markdown)?;
             Ok(format!(
                 "HTTP {} · {}\n{}\n\n{}",
                 st.status_code,

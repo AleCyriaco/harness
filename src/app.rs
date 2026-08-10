@@ -152,17 +152,20 @@ enum SettingsSection {
     Approvals,
     Memory,
     Swarm,
+    /// Extração de página, crawl e detector de laço.
+    Web,
     Appearance,
     Updates,
 }
 
 impl SettingsSection {
-    const ALL: [SettingsSection; 7] = [
+    const ALL: [SettingsSection; 8] = [
         SettingsSection::Models,
         SettingsSection::Workspace,
         SettingsSection::Approvals,
         SettingsSection::Memory,
         SettingsSection::Swarm,
+        SettingsSection::Web,
         SettingsSection::Appearance,
         SettingsSection::Updates,
     ];
@@ -174,6 +177,7 @@ impl SettingsSection {
             SettingsSection::Approvals => "Approvals",
             SettingsSection::Memory => "Memory",
             SettingsSection::Swarm => "Swarm",
+            SettingsSection::Web => "Web & loops",
             SettingsSection::Appearance => "Appearance",
             SettingsSection::Updates => "Updates",
         }
@@ -1413,11 +1417,11 @@ impl HarnessApp {
 
     /// Fim de turno com Gauntlet Loop: reenvia sozinho enquanto a resposta não
     /// trouxer o marcador. Ler o toggle aqui é o que faz desligá-lo interromper.
-    fn gauntlet_tick(&mut self, reply: &str) {
+    fn gauntlet_tick(&mut self, reply: &str, stuck: bool) {
         use crate::gauntlet::{next_step, Stop, CONTINUE_MESSAGE};
         let on = self.session.meta.gauntlet;
         let max = self.cfg.gauntlet_max_iterations;
-        match next_step(on, reply, self.gauntlet_iter, max) {
+        match next_step(on, reply, stuck, self.gauntlet_iter, max) {
             None if !on => {}
             None => {
                 self.gauntlet_iter += 1;
@@ -1434,6 +1438,10 @@ impl HarnessApp {
             Some(Stop::Exhausted) => {
                 self.gauntlet_iter = 0;
                 self.status = format!("gauntlet loop: stopped at {max} iterations");
+            }
+            Some(Stop::Stuck) => {
+                self.gauntlet_iter = 0;
+                self.status = "gauntlet loop: stopped — the turn was looping".into();
             }
         }
     }
@@ -2451,6 +2459,7 @@ impl HarnessApp {
         let mut done = false;
         let mut final_reply = None;
         let mut cancelled = false;
+        let mut turn_stuck = false;
 
         for ev in events {
             match ev {
@@ -2507,8 +2516,9 @@ impl HarnessApp {
                     self.status = format!("approval: {name}");
                     self.pending_approval = Some((name, args_preview));
                 }
-                AgentEvent::Done { reply } => {
+                AgentEvent::Done { reply, stuck } => {
                     final_reply = Some(reply);
+                    turn_stuck = stuck;
                     done = true;
                 }
                 AgentEvent::Error(e) => {
@@ -2571,7 +2581,7 @@ impl HarnessApp {
             self.pack_active_tab();
             self.refresh_mem_stats(true);
             if !cancelled {
-                self.gauntlet_tick(&last_reply);
+                self.gauntlet_tick(&last_reply, turn_stuck);
             }
         } else if self.busy || self.open_tabs.iter().any(|t| t.busy) {
             ctx.request_repaint_after(std::time::Duration::from_millis(33));
@@ -2630,7 +2640,7 @@ impl HarnessApp {
                 tab.pending_approval = Some((name, args_preview));
                 tab.busy = true;
             }
-            AgentEvent::Done { reply } => {
+            AgentEvent::Done { reply, .. } => {
                 if !reply.is_empty() {
                     if tab.stream_buf.is_empty() {
                         tab.messages.push(UiMessage {
@@ -5002,7 +5012,7 @@ impl HarnessApp {
                 }
             }
             if w::chip(ui, "fetch text").clicked() {
-                match browser::fetch_preview(&self.browser_url) {
+                match browser::fetch_preview(&self.browser_url, self.cfg.web_markdown) {
                     Ok(s) => {
                         self.browser = s;
                         self.status = format!("HTTP {}", self.browser.status_code);
@@ -5800,6 +5810,7 @@ impl HarnessApp {
                                                     self.settings_memory(ui)
                                                 }
                                                 SettingsSection::Swarm => self.settings_swarm(ui),
+                                                SettingsSection::Web => self.settings_web(ui),
                                                 SettingsSection::Appearance => {
                                                     self.settings_appearance(ui, ctx)
                                                 }
@@ -6177,6 +6188,65 @@ impl HarnessApp {
             "{} workers right now (daemon)",
             self.swarm_running()
         )));
+    }
+
+    fn settings_web(&mut self, ui: &mut egui::Ui) {
+        ui.label(crate::theme::ui_medium("Web pages", 13.0));
+        ui.checkbox(
+            &mut self.cfg.web_markdown,
+            "Read pages as markdown (headings, links, code)",
+        );
+        ui.label(crate::theme::meta(
+            "Off = flat text, like before. On, nav/cookie/footer chrome is dropped.",
+        ));
+        ui.add_space(10.0);
+
+        ui.label(crate::theme::ui_medium("Crawl limits", 13.0));
+        ui.horizontal(|ui| {
+            ui.label(crate::theme::meta("max pages"));
+            let mut n = self.cfg.web_crawl_max_pages;
+            if ui.add(egui::DragValue::new(&mut n).range(1..=200)).changed() {
+                self.cfg.web_crawl_max_pages = n;
+            }
+            ui.add_space(12.0);
+            ui.label(crate::theme::meta("max depth"));
+            let mut d = self.cfg.web_crawl_max_depth;
+            if ui.add(egui::DragValue::new(&mut d).range(0..=5)).changed() {
+                self.cfg.web_crawl_max_depth = d;
+            }
+        });
+        ui.checkbox(&mut self.cfg.web_crawl_same_domain, "Same domain only");
+        ui.checkbox(&mut self.cfg.web_respect_robots, "Respect robots.txt");
+        ui.label(crate::theme::meta(
+            "The agent may ask for less, never for more than these.",
+        ));
+        ui.add_space(10.0);
+
+        ui.label(crate::theme::ui_medium("Loop guards", 13.0));
+        ui.checkbox(
+            &mut self.cfg.stuck_detect,
+            "Block a tool repeated with identical arguments",
+        );
+        ui.horizontal(|ui| {
+            ui.label(crate::theme::meta("after"));
+            let mut n = self.cfg.stuck_threshold;
+            if ui.add(egui::DragValue::new(&mut n).range(2..=20)).changed() {
+                self.cfg.stuck_threshold = n;
+            }
+            ui.label(crate::theme::meta("identical calls in one turn"));
+        });
+        ui.horizontal(|ui| {
+            ui.label(crate::theme::meta("Gauntlet Loop ceiling"));
+            let mut n = self.cfg.gauntlet_max_iterations;
+            if ui.add(egui::DragValue::new(&mut n).range(1..=100)).changed() {
+                self.cfg.gauntlet_max_iterations = n;
+            }
+            ui.label(crate::theme::meta("auto-continues"));
+        });
+        ui.add_space(6.0);
+        ui.label(crate::theme::meta(
+            "A looping turn also stops the Gauntlet Loop instead of burning what is left.",
+        ));
     }
 
     fn settings_appearance(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {

@@ -46,18 +46,24 @@ pub enum Stop {
     Done,
     /// Bateu o teto de iterações.
     Exhausted,
+    /// O turno girou em falso (mesma tool, mesmos args) — insistir é queimar
+    /// as iterações restantes à toa.
+    Stuck,
 }
 
 /// Decide o que fazer no fim de um turno.
 ///
 /// `on` já leva em conta o toggle no instante da decisão, então desligá-lo
 /// interrompe o laço sem precisar de cancelamento em outro lugar.
-pub fn next_step(on: bool, reply: &str, iterations: u32, max: u32) -> Option<Stop> {
+pub fn next_step(on: bool, reply: &str, stuck: bool, iterations: u32, max: u32) -> Option<Stop> {
     if !on {
         return None;
     }
     if is_done(reply) {
         return Some(Stop::Done);
+    }
+    if stuck {
+        return Some(Stop::Stuck);
     }
     if iterations >= max {
         return Some(Stop::Exhausted);
@@ -71,27 +77,41 @@ mod tests {
 
     #[test]
     fn desligado_nunca_continua_nem_para() {
-        assert_eq!(next_step(false, "qualquer coisa", 0, 10), None);
+        assert_eq!(next_step(false, "qualquer coisa", false, 0, 10), None);
         // mesmo com o marcador: desligado é desligado
-        assert_eq!(next_step(false, DONE_MARKER, 0, 10), None);
+        assert_eq!(next_step(false, DONE_MARKER, false, 0, 10), None);
     }
 
     #[test]
     fn continua_ate_o_marcador() {
         // sem marcador e com folga: `None` = continuar
-        assert_eq!(next_step(true, "faltou a parte 2", 3, 10), None);
+        assert_eq!(next_step(true, "faltou a parte 2", false, 3, 10), None);
         assert_eq!(
-            next_step(true, "tudo certo [GAUNTLET:DONE]", 3, 10),
+            next_step(true, "tudo certo [GAUNTLET:DONE]", false, 3, 10),
             Some(Stop::Done)
         );
     }
 
     #[test]
     fn teto_de_iteracoes_para_o_laco() {
-        assert_eq!(next_step(true, "ainda não", 9, 10), None);
-        assert_eq!(next_step(true, "ainda não", 10, 10), Some(Stop::Exhausted));
+        assert_eq!(next_step(true, "ainda não", false, 9, 10), None);
+        assert_eq!(next_step(true, "ainda não", false, 10, 10), Some(Stop::Exhausted));
         // marcador vence o teto: terminou é terminou
-        assert_eq!(next_step(true, DONE_MARKER, 99, 10), Some(Stop::Done));
+        assert_eq!(next_step(true, DONE_MARKER, false, 99, 10), Some(Stop::Done));
+    }
+
+    #[test]
+    fn turno_travado_para_o_laco_antes_do_teto() {
+        // girar em falso não melhora com "continue o loop"
+        assert_eq!(
+            next_step(true, "ainda não", true, 1, 10),
+            Some(Stop::Stuck)
+        );
+        // mas terminar é terminar, mesmo tendo travado no meio
+        assert_eq!(
+            next_step(true, DONE_MARKER, true, 1, 10),
+            Some(Stop::Done)
+        );
     }
 
     #[test]

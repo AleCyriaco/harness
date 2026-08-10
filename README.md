@@ -35,7 +35,8 @@ GUI (app.rs) ──NDJSON socket──> daemon.rs ──> agent.rs ──> tools
 | `agent.rs` | Turn loop, tool rounds, approvals |
 | `llm.rs` · `llm_responses.rs` · `llm_pool.rs` | Chat Completions, Responses API, pool/failover |
 | `graph.rs` | Structural project index (symbols/imports/refs/clusters) + impact |
-| `gauntlet.rs` · `tokenless.rs` | Gauntlet Loop, Token Less Cost |
+| `gauntlet.rs` · `stuck.rs` · `tokenless.rs` | Gauntlet Loop, loop guard, Token Less Cost |
+| `web_extract.rs` · `browser.rs` | HTML → markdown, link harvesting, crawl |
 | `session.rs` · `memory.rs` · `skills.rs` | Sessions, lexical vector memory, versioned skills |
 | `theme.rs` · `ui.rs` · `icon.rs` · `md.rs` | Paper/Ember palettes, widgets, mark, chat markdown |
 
@@ -76,6 +77,9 @@ means there is work or something stale there.
 
 **Usage panel.** Live token send/receive charts (separate Sent and Received),
 cache hits, cost by origin. Pin it to keep it open across chats.
+
+**Settings** sections: Models and pool · Workspace · Approvals · Memory · Swarm
+· **Web & loops** · Appearance · Updates.
 
 **Status bar.** Chat folder · daemon `live/max` · Gauntlet counter · graph
 coverage · Token Less level · memory footprint. The graph and Token Less chips
@@ -134,6 +138,13 @@ counter.
 No sub-agents, no queues, no extra processes: it is prompt injection +
 auto-continue + a ceiling.
 
+### Loop guard
+Independent of the Gauntlet Loop: when the model calls the **same tool with the
+same arguments** N times in one turn (default 3), the call is not executed —
+the model gets an error telling it that it is looping and to change approach. A
+turn that trips the guard also stops the Gauntlet Loop instead of burning the
+remaining iterations. Both are configurable in **Settings → Web & loops**.
+
 ### Swarm
 Parallel workers inside the daemon (`swarm_max_workers`, 1–3) with a shared
 plan: propose, assign, claim, complete. Workers can use a different endpoint from
@@ -162,10 +173,25 @@ automatically: **Chat Completions** and the **Responses API** (Meta Muse).
 See [docs/META_SETUP.md](docs/META_SETUP.md) and
 [docs/GROK_SETUP.md](docs/GROK_SETUP.md).
 
-### Web and server
+### Reading the web
+`browser_fetch` turns a page into **clean markdown**: headings, links, lists and
+code blocks survive; nav, cookie banners, footers and scripts do not. On the
+Rust book it is 30 KB of HTML in, 6 KB of markdown out — the agent stops paying
+tokens for site chrome.
+
+`web_crawl` walks from a URL breadth-first, capped by config (max pages, max
+depth, same-domain, robots.txt). Reading and crawling see the page differently
+on purpose: the text you get back is the cleaned content, while the crawl
+frontier is harvested from the **whole** document — site navigation is exactly
+where the links to other pages live.
+
+Every cap that fires is stated in the result ("stopped at max_pages=20 — 37 more
+URL(s) were queued"), never a silent truncation.
+
+### Web server
 Built-in static HTTP server (`127.0.0.1:8765`) for local web apps, a WebView
-window, and page fetch/preview — `/serve [path] [port]`, `/stopserve`,
-`/web [url]`, or the `web_server_*` and `browser_*` tools.
+window, and page preview — `/serve [path] [port]`, `/stopserve`, `/web [url]`,
+or the `web_server_*` and `browser_*` tools.
 
 ### Also
 MCP client (`mcp_connect` / `mcp_call`), background jobs (`bg_start`, `bg_poll`),
@@ -206,7 +232,7 @@ Portuguese aliases stay valid (`/apagar`, `/renomear`, `/grafo`).
 | Skills | `skill_list` `skill_load` `skill_save` `skill_versions` |
 | Swarm | `swarm_spawn` `swarm_list` `swarm_message` `swarm_wait` `swarm_stop` `swarm_plan_propose` `swarm_plan_assign` `swarm_plan_next` `swarm_plan_complete` `swarm_plan_show` |
 | Plan | `plan_add` `plan_list` `plan_set` `note` |
-| Web | `web_server_start` `web_server_status` `web_server_stop` `browser_open` `browser_fetch` |
+| Web | `browser_fetch` `web_crawl` `browser_open` `web_server_start` `web_server_status` `web_server_stop` |
 | MCP | `mcp_connect` `mcp_list` `mcp_call` `mcp_disconnect` |
 | Meta | `usage` `get_diagnostics` `provider_profile` `session_search` `resume_import` `selfdev` `side_panel` `clear` |
 
@@ -227,6 +253,14 @@ theme = "Paper"                  # Paper | Ember
 token_less = "lite"              # default for new chats
 gauntlet_max_iterations = 10     # auto-continue ceiling (1–100)
 usage_pinned = false
+
+web_markdown = true              # pages as markdown instead of flat text
+web_crawl_max_pages = 20         # 1–200
+web_crawl_max_depth = 2          # 0–5
+web_crawl_same_domain = true
+web_respect_robots = true
+stuck_detect = true              # block a tool repeated with identical args
+stuck_threshold = 3              # 2–20
 
 history_cap = 28                 # LLM messages kept
 tool_result_cap = 12000          # chars per tool result
@@ -257,7 +291,8 @@ files go to your workspace, never next to the binary.
 ## Development
 
 ```bash
-cargo test                      # 55 tests, 0 warnings — keep it that way
+cargo test                      # 68 tests, 0 warnings — keep it that way
+cargo test -- --ignored --nocapture   # network/visual end-to-end checks
 cargo build                     # debug (slow UI; iteration only)
 ./scripts/bundle-macos.sh       # release + target/harness.app
 pkill -f "harness serve"        # required after protocol changes

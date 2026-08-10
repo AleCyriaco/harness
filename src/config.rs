@@ -53,6 +53,28 @@ pub struct Config {
     /// Aparência: Paper (claro) ou Ember (escuro). Alterna com ⇧⌘D.
     #[serde(default)]
     pub theme: crate::theme::ThemeMode,
+    /// Web: converter página em markdown (títulos/links/código) em vez de
+    /// texto corrido. Desligue para voltar ao comportamento antigo.
+    #[serde(default = "default_true")]
+    pub web_markdown: bool,
+    /// Teto de páginas por `web_crawl`.
+    #[serde(default = "default_crawl_pages")]
+    pub web_crawl_max_pages: u32,
+    /// Profundidade máxima a partir da URL inicial.
+    #[serde(default = "default_crawl_depth")]
+    pub web_crawl_max_depth: u32,
+    /// Só seguir links do mesmo domínio.
+    #[serde(default = "default_true")]
+    pub web_crawl_same_domain: bool,
+    /// Obedecer robots.txt do site.
+    #[serde(default = "default_true")]
+    pub web_respect_robots: bool,
+    /// Interromper a mesma tool chamada com os mesmos argumentos N vezes.
+    #[serde(default = "default_true")]
+    pub stuck_detect: bool,
+    /// N do detector acima.
+    #[serde(default = "default_stuck_threshold")]
+    pub stuck_threshold: u32,
     /// Gauntlet Loop ligado neste turno. Vive no chat, não no config.toml —
     /// o daemon copia do `LiveSession` para o `cfg` do turno.
     #[serde(skip)]
@@ -113,6 +135,15 @@ fn default_web_port() -> u16 {
 fn default_max_sessions() -> usize {
     32
 }
+fn default_crawl_pages() -> u32 {
+    20
+}
+fn default_crawl_depth() -> u32 {
+    2
+}
+fn default_stuck_threshold() -> u32 {
+    3
+}
 fn default_gauntlet_max() -> u32 {
     crate::gauntlet::DEFAULT_MAX_ITERATIONS
 }
@@ -155,6 +186,13 @@ impl Default for Config {
             mode: AppMode::Code,
             theme: crate::theme::ThemeMode::default(),
             usage_pinned: false,
+            web_markdown: true,
+            web_crawl_max_pages: default_crawl_pages(),
+            web_crawl_max_depth: default_crawl_depth(),
+            web_crawl_same_domain: true,
+            web_respect_robots: true,
+            stuck_detect: true,
+            stuck_threshold: default_stuck_threshold(),
             gauntlet: false,
             gauntlet_max_iterations: default_gauntlet_max(),
             token_less: crate::tokenless::TokenLessLevel::default(),
@@ -242,6 +280,9 @@ impl Config {
             cfg.gauntlet_max_iterations = default_gauntlet_max();
         }
         cfg.gauntlet_max_iterations = cfg.gauntlet_max_iterations.clamp(1, 100);
+        cfg.web_crawl_max_pages = cfg.web_crawl_max_pages.clamp(1, 200);
+        cfg.web_crawl_max_depth = cfg.web_crawl_max_depth.clamp(0, 5);
+        cfg.stuck_threshold = cfg.stuck_threshold.clamp(2, 20);
         if cfg.llm_rotate_minutes == 0 {
             cfg.llm_rotate_minutes = default_rotate_minutes();
         }

@@ -6,7 +6,8 @@ in eframe/egui. No external runtime, no Python, no service.
 ## Commands
 
 ```bash
-cargo test                      # 55 tests, 0 warnings — keep it that way
+cargo test                      # 68 tests, 0 warnings — keep it that way
+cargo test -- --ignored --nocapture   # network/visual end-to-end, outside the suite
 cargo build                     # debug (slow UI; iteration only)
 ./scripts/bundle-macos.sh       # release + target/harness.app (use this to test)
 ./scripts/bundle-macos.sh debug # bundle from the debug binary
@@ -48,6 +49,8 @@ with "missing field X".
 | `metrics.rs` | tokens, cache, cost, by origin |
 | `tokenless.rs` | Token Less Cost — output compression per chat |
 | `gauntlet.rs` | Gauntlet Loop — directive + done marker + continue rule |
+| `stuck.rs` | loop guard — same tool + same args N times is blocked |
+| `web_extract.rs` | HTML → markdown, link harvesting, robots.txt |
 
 ## Concepts the code does not make obvious
 
@@ -72,6 +75,17 @@ tested in isolation; the rest is wiring. Reading the toggle at decision time is
 what makes turning it off interrupt the loop. It rides the exact same path as
 `token_less`: `ClientMsg::UserMessage` → `LiveSession` → turn `cfg` →
 `apply_to_system` in `agent.rs`. **No sub-agents, no queues, no new processes.**
+
+**Reading a page and crawling it want opposite things.** `Page.links` carries
+only the links inside the cleaned content — that is what you cite in an answer.
+The crawl frontier comes from `all_links()` over the **whole** document, because
+site navigation is exactly where the links to other pages live. Dropping `<nav>`
+for reading and harvesting it for crawling is deliberate, not an oversight.
+
+**Class/id noise filtering only applies to containers.** An `<a class="header">`
+inside an `<h2>` is the heading's anchor link, not site chrome — filtering
+inline elements by class silently emptied every heading. Only the tags in
+`NOISE_CONTAINERS` are eligible.
 
 **Vector memory is lexical**, not semantic: `memory::embed` is bag-of-words with
 hashing plus trigrams. Swapping in real embeddings requires a migration (`DIM` is

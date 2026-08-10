@@ -584,26 +584,20 @@ mod tests {
     /// O cache tem que cair quando uma sessão é gravada, senão a lista congela.
     #[test]
     fn cache_da_lista_invalida_ao_gravar() {
+        // afirma a presença do *nosso* id, não a contagem da pasta: outros
+        // testes gravam na mesma pasta em paralelo e a contagem oscila
         let id = format!("test-cache-{}", uuid::Uuid::new_v4());
-        let antes = list_sessions().unwrap().len();
-        // segunda chamada vem do cache e tem que bater
-        assert_eq!(list_sessions().unwrap().len(), antes);
+        let tem = |id: &str| list_sessions().unwrap().iter().any(|m| m.id == id);
+        assert!(!tem(&id));
+        assert!(!tem(&id), "segunda chamada vem do cache e tem que bater");
 
         let mut s = sess("cache", &[("user", "oi")]);
         s.meta.id = id.clone();
         save_session(&s).unwrap();
-        assert_eq!(
-            list_sessions().unwrap().len(),
-            antes + 1,
-            "gravar tem que invalidar o cache"
-        );
+        assert!(tem(&id), "gravar tem que invalidar o cache");
 
         delete_session(&id).unwrap();
-        assert_eq!(
-            list_sessions().unwrap().len(),
-            antes,
-            "apagar também"
-        );
+        assert!(!tem(&id), "apagar também");
     }
 
     #[test]

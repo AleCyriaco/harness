@@ -895,7 +895,7 @@ fn start_turn(
                 },
             );
             match &ev {
-                AgentEvent::Done { reply } => {
+                AgentEvent::Done { reply, .. } => {
                     let mut g = state_bg.lock().unwrap();
                     if let Some(s) = g.sessions.get_mut(&sid) {
                         s.history.push(ChatMessage {
@@ -951,7 +951,9 @@ fn event_to_json(ev: &AgentEvent) -> (String, serde_json::Value) {
             "need_approval".into(),
             json!({ "name": name, "args": args_preview }),
         ),
-        AgentEvent::Done { reply } => ("done".into(), json!({ "reply": reply })),
+        AgentEvent::Done { reply, stuck } => {
+            ("done".into(), json!({ "reply": reply, "stuck": stuck }))
+        }
         AgentEvent::Error(e) => ("error".into(), json!({ "message": e })),
         AgentEvent::Cancelled => ("cancelled".into(), json!({})),
     }

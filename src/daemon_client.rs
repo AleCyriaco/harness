@@ -460,6 +460,11 @@ fn map_event(event: &str, payload: &serde_json::Value) -> Option<AgentEvent> {
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .into(),
+            // daemon antigo não manda o campo — ausente = não travou
+            stuck: payload
+                .get("stuck")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
         }),
         "error" => Some(AgentEvent::Error(
             payload

@@ -20,7 +20,11 @@ pub enum AgentEvent {
         name: String,
         args_preview: String,
     },
-    Done { reply: String },
+    Done {
+        reply: String,
+        /// O turno bateu no detector de laço (`stuck.rs`).
+        stuck: bool,
+    },
     Error(String),
     Cancelled,
 }
@@ -203,6 +207,9 @@ fn run_turn_inner(
     let mut shell_always = cfg.auto_approve_shell;
     let mut writes_always = false;
 
+    // (tool, args) já executados neste turno — combustível do detector de laço
+    let mut tool_log: Vec<(String, String)> = Vec::new();
+    let mut stuck_hit = false;
     for round in 0..max_rounds {
         if cancel.load(Ordering::Relaxed) {
             let _ = tx.send(AgentEvent::Cancelled);
@@ -246,6 +253,31 @@ fn run_turn_inner(
                     let name = call.function.name.clone();
                     let args = call.function.arguments.clone();
                     let short_args = preview_args(&args, 180);
+
+                    // laço: barra antes de gastar aprovação e execução
+                    if crate::stuck::check(
+                        cfg.stuck_detect,
+                        &tool_log,
+                        &name,
+                        &args,
+                        cfg.stuck_threshold,
+                    ) == crate::stuck::Verdict::Block
+                    {
+                        let times = crate::stuck::repeats(&tool_log, &name, &args);
+                        stuck_hit = true;
+                        let _ = tx.send(AgentEvent::Status(format!(
+                            "loop detected: {name} repeated {times}x — blocked"
+                        )));
+                        history.push(ChatMessage {
+                            role: "tool".into(),
+                            content: Some(crate::stuck::message(&name, times)),
+                            tool_calls: None,
+                            tool_call_id: Some(call.id),
+                            name: Some(name),
+                        });
+                        continue;
+                    }
+                    tool_log.push((name.clone(), args.clone()));
 
                     if needs_approval(&cfg, &name, shell_always, writes_always, guard_writes) {
                         let _ = tx.send(AgentEvent::NeedApproval {
@@ -342,6 +374,7 @@ fn run_turn_inner(
 
     let _ = tx.send(AgentEvent::Done {
         reply: final_text,
+        stuck: stuck_hit,
     });
     Ok(())
 }
