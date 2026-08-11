@@ -454,6 +454,10 @@ fn map_event(event: &str, payload: &serde_json::Value) -> Option<AgentEvent> {
                 .unwrap_or("")
                 .into(),
         }),
+        "round" => Some(AgentEvent::Round {
+            n: payload.get("n").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
+            max: payload.get("max").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
+        }),
         "done" => Some(AgentEvent::Done {
             reply: payload
                 .get("reply")

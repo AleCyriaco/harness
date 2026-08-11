@@ -20,6 +20,11 @@ pub enum AgentEvent {
         name: String,
         args_preview: String,
     },
+    /// Rodada de tools atual e o teto do turno — vira barra de progresso.
+    Round {
+        n: u32,
+        max: u32,
+    },
     Done {
         reply: String,
         /// O turno bateu no detector de laço (`stuck.rs`).
@@ -216,10 +221,15 @@ fn run_turn_inner(
             return Ok(());
         }
         history = llm::compact_history(&history, cfg.history_cap, cfg.tool_result_cap);
+        let _ = tx.send(AgentEvent::Round {
+            n: round as u32 + 1,
+            max: max_rounds as u32,
+        });
         let _ = tx.send(AgentEvent::Status(format!(
-            "{} · round {}…",
+            "{} · round {}/{}…",
             mode.label(),
-            round + 1
+            round + 1,
+            max_rounds
         )));
 
         let event_tx = tx.clone();

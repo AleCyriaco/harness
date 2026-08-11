@@ -951,6 +951,7 @@ fn event_to_json(ev: &AgentEvent) -> (String, serde_json::Value) {
             "need_approval".into(),
             json!({ "name": name, "args": args_preview }),
         ),
+        AgentEvent::Round { n, max } => ("round".into(), json!({ "n": n, "max": max })),
         AgentEvent::Done { reply, stuck } => {
             ("done".into(), json!({ "reply": reply, "stuck": stuck }))
         }

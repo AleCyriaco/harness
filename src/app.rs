@@ -399,6 +399,8 @@ pub struct HarnessApp {
     announced_page: Option<PathBuf>,
     /// Mensagens digitadas enquanto o agente trabalha; vão na ordem, no fim do turno.
     queued: Vec<String>,
+    /// Rodada de tools atual / teto do turno — progresso real, não previsão.
+    turn_round: (u32, u32),
     metrics: crate::metrics::Metrics,
     graph_stats: crate::graph::GraphStats,
     graph_query: String,
@@ -519,6 +521,7 @@ impl HarnessApp {
             gauntlet_iter: 0,
             announced_page: None,
             queued: Vec::new(),
+            turn_round: (0, 0),
             metrics: crate::metrics::Metrics::default(),
             graph_stats: crate::graph::GraphStats::default(),
             graph_query: String::new(),
@@ -1934,6 +1937,7 @@ impl HarnessApp {
             return;
         }
         self.busy = true;
+        self.turn_round = (0, 0);
         self.stream_buf.clear();
         self.pending_approval = None;
         self.status = format!("daemon · 📁 {} · running…", self.session.meta.chat_folder_name);
@@ -2556,6 +2560,9 @@ impl HarnessApp {
                     self.status = format!("approval: {name}");
                     self.pending_approval = Some((name, args_preview));
                 }
+                AgentEvent::Round { n, max } => {
+                    self.turn_round = (n, max);
+                }
                 AgentEvent::Done { reply, stuck } => {
                     final_reply = Some(reply);
                     turn_stuck = stuck;
@@ -2610,6 +2617,7 @@ impl HarnessApp {
                 self.llm_history.drain(0..drain);
             }
             self.busy = false;
+            self.turn_round = (0, 0);
             self.status = if cancelled {
                 format!("cancelled · daemon · {}", self.session.meta.chat_folder_name)
             } else {
@@ -2705,6 +2713,7 @@ impl HarnessApp {
                 tab.pending_approval = Some((name, args_preview));
                 tab.busy = true;
             }
+            AgentEvent::Round { .. } => {}
             AgentEvent::Done { reply, .. } => {
                 if !reply.is_empty() {
                     if tab.stream_buf.is_empty() {
@@ -3354,6 +3363,40 @@ impl HarnessApp {
                             .size(10.5)
                             .color(dot_c),
                     );
+                    // progresso do turno: rodadas gastas do teto (não é ETA)
+                    let (rn, rmax) = self.turn_round;
+                    if self.busy && rmax > 0 {
+                        let frac = (rn as f32 / rmax as f32).clamp(0.0, 1.0);
+                        ui.label(
+                            egui::RichText::new(format!("{:.0}%", frac * 100.0))
+                                .monospace()
+                                .size(10.5)
+                                .color(p.accent),
+                        )
+                        .on_hover_text(format!(
+                            "tool round {rn} of {rmax} — effort spent in this turn, not an ETA"
+                        ));
+                        let (bar, _) =
+                            ui.allocate_exact_size(egui::vec2(54.0, 4.0), egui::Sense::hover());
+                        ui.painter()
+                            .rect_filled(bar, egui::CornerRadius::same(2), p.border_soft);
+                        ui.painter().rect_filled(
+                            egui::Rect::from_min_size(bar.min, egui::vec2(bar.width() * frac, 4.0)),
+                            egui::CornerRadius::same(2),
+                            p.accent,
+                        );
+                    }
+                    // tokens por segundo, os dois sentidos
+                    let (tin, tout) = self.meter.last();
+                    if self.busy || tin > 0.0 || tout > 0.0 {
+                        ui.label(
+                            egui::RichText::new(format!("↑{tin:.0} ↓{tout:.0} tok/s"))
+                                .monospace()
+                                .size(10.5)
+                                .color(if tout > 0.0 { p.ok } else { p.muted }),
+                        )
+                        .on_hover_text("sent / received tokens per second");
+                    }
                     if self.session.meta.gauntlet {
                         ui.label(
                             egui::RichText::new(format!(
