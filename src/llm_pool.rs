@@ -42,6 +42,17 @@ pub struct LlmEndpoint {
     pub wire: String,
 }
 
+/// Servidor na própria máquina ou na LAN: a chave é opcional, então um
+/// endpoint local sem key precisa continuar valendo.
+/// cyrix: cobre localhost/127./192.168./10./.local — 172.16-31 fica de fora até
+/// alguém precisar.
+pub fn is_local(api_base: &str) -> bool {
+    let h = api_base.to_ascii_lowercase();
+    ["localhost", "127.0.0.1", "://192.168.", "://10.", "0.0.0.0", ".local"]
+        .iter()
+        .any(|m| h.contains(m))
+}
+
 /// Protocolo que um endpoint fala. `api.meta.ai` usa a Responses API, que tem
 /// corpo e eventos diferentes de Chat Completions.
 pub fn wire_of(wire: &str, api_base: &str) -> Wire {
@@ -260,11 +271,10 @@ fn seed_defaults(cfg: &mut Config) {
         if key.is_empty() && !env2.is_empty() {
             key = std::env::var(env2).unwrap_or_default();
         }
-        // ollama/lmstudio work with dummy key
-        if key.is_empty() && (name == "ollama" || name == "lmstudio") {
+        if key.is_empty() && is_local(base) {
             key = "local".into();
         }
-        let enabled = !key.is_empty() || name == "ollama" || name == "lmstudio";
+        let enabled = !key.is_empty();
         // Don't add disabled cloud without key to reduce noise — add but disabled
         cfg.llm_pool.push(LlmEndpoint {
             price_in,
@@ -642,6 +652,9 @@ mod wire_tests {
     #[test]
     fn meta_e_detectada_pelo_host_sem_config() {
         // config antigo não tem o campo; o host decide
+        assert!(is_local("http://192.168.0.50:8080/v1"));
+        assert!(is_local("http://localhost:11434/v1"));
+        assert!(!is_local("https://api.x.ai/v1"));
         assert_eq!(wire_of("", "https://api.meta.ai/v1"), Wire::Responses);
         assert_eq!(wire_of("", "https://api.x.ai/v1"), Wire::Chat);
         assert_eq!(wire_of("", "https://api.openai.com/v1"), Wire::Chat);

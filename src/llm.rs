@@ -88,7 +88,12 @@ pub fn chat(
         let mut try_cfg = cfg.clone();
         ep.apply_to(&mut try_cfg);
         if try_cfg.api_key.trim().is_empty() {
-            continue;
+            // LLM da rede local costuma não pedir key; pular seria sumir com ele
+            if crate::llm_pool::is_local(&try_cfg.api_base) {
+                try_cfg.api_key = "local".into();
+            } else {
+                continue;
+            }
         }
 
         // Responses API tem corpo e eventos próprios; adaptador separado.

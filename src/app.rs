@@ -6084,6 +6084,29 @@ impl HarnessApp {
             ui.add_space(4.0);
         }
 
+        if ui
+            .button("+ endpoint")
+            .on_hover_text("Add an OpenAI-compatible server — LAN or localhost. No key needed.")
+            .clicked()
+        {
+            let n = self.cfg.llm_pool.len();
+            self.cfg.llm_pool.push(crate::llm_pool::LlmEndpoint {
+                name: format!("local{n}"),
+                api_base: "http://192.168.0.1:8080/v1".into(),
+                api_key: String::new(),
+                model: "local-model".into(),
+                enabled: true,
+                priority: 50,
+                weight: 10,
+                use_for_code: true,
+                use_for_office: true,
+                use_for_workers: false,
+                price_in: 0.0,
+                price_out: 0.0,
+                wire: String::new(),
+            });
+        }
+
         if let Some(name) = use_name {
             if let Ok(msg) = crate::llm_pool::set_active(&mut self.cfg, &name) {
                 self.draft_api_base = self.cfg.api_base.clone();
