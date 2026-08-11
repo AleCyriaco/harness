@@ -7,30 +7,15 @@
 //!
 //! Regra pura, sem I/O — quem conta as chamadas é o `agent.rs`.
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Verdict {
-    /// Segue o baile.
-    Run,
-    /// Repetição demais: não executa, devolve aviso.
-    Block,
-}
-
 /// Quantas vezes esta chamada exata já rodou neste turno.
 pub fn repeats(seen: &[(String, String)], name: &str, args: &str) -> usize {
     seen.iter().filter(|(n, a)| n == name && a == args).count()
 }
 
-/// `threshold` = quantas execuções idênticas são toleradas. Na de número
-/// `threshold + 1` a chamada é barrada.
-pub fn check(on: bool, seen: &[(String, String)], name: &str, args: &str, threshold: u32) -> Verdict {
-    if !on || threshold == 0 {
-        return Verdict::Run;
-    }
-    if repeats(seen, name, args) >= threshold as usize {
-        Verdict::Block
-    } else {
-        Verdict::Run
-    }
+/// `threshold` = quantas execuções idênticas são toleradas; na seguinte,
+/// barra. `threshold == 0` conta como desligado, não como "barra tudo".
+pub fn is_looping(on: bool, seen: &[(String, String)], name: &str, args: &str, threshold: u32) -> bool {
+    on && threshold > 0 && repeats(seen, name, args) >= threshold as usize
 }
 
 /// O que o modelo lê no lugar do resultado da tool.
@@ -56,33 +41,24 @@ mod tests {
     #[test]
     fn tres_iguais_bloqueia_na_quarta() {
         let seen = log(&[("read_file", "{\"path\":\"a\"}"); 3]);
-        assert_eq!(
-            check(true, &seen, "read_file", "{\"path\":\"a\"}", 3),
-            Verdict::Block
-        );
+        assert!(is_looping(true, &seen, "read_file", "{\"path\":\"a\"}", 3));
         // duas ainda passa
         let seen2 = log(&[("read_file", "{\"path\":\"a\"}"); 2]);
-        assert_eq!(
-            check(true, &seen2, "read_file", "{\"path\":\"a\"}", 3),
-            Verdict::Run
-        );
+        assert!(!is_looping(true, &seen2, "read_file", "{\"path\":\"a\"}", 3));
     }
 
     #[test]
     fn argumento_diferente_nao_e_laco() {
         let seen = log(&[("read_file", "{\"path\":\"a\"}"); 9]);
-        assert_eq!(
-            check(true, &seen, "read_file", "{\"path\":\"b\"}", 3),
-            Verdict::Run
-        );
+        assert!(!is_looping(true, &seen, "read_file", "{\"path\":\"b\"}", 3));
     }
 
     #[test]
     fn desligado_nunca_bloqueia() {
         let seen = log(&[("run_command", "ls"); 50]);
-        assert_eq!(check(false, &seen, "run_command", "ls", 3), Verdict::Run);
-        // e threshold 0 também é "desligado", não "bloqueia tudo"
-        assert_eq!(check(true, &seen, "run_command", "ls", 0), Verdict::Run);
+        assert!(!is_looping(false, &seen, "run_command", "ls", 3));
+        // threshold 0 também é "desligado", não "bloqueia tudo"
+        assert!(!is_looping(true, &seen, "run_command", "ls", 0));
     }
 
     #[test]

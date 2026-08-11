@@ -255,14 +255,13 @@ fn run_turn_inner(
                     let short_args = preview_args(&args, 180);
 
                     // laço: barra antes de gastar aprovação e execução
-                    if crate::stuck::check(
+                    if crate::stuck::is_looping(
                         cfg.stuck_detect,
                         &tool_log,
                         &name,
                         &args,
                         cfg.stuck_threshold,
-                    ) == crate::stuck::Verdict::Block
-                    {
+                    ) {
                         let times = crate::stuck::repeats(&tool_log, &name, &args);
                         stuck_hit = true;
                         let _ = tx.send(AgentEvent::Status(format!(
