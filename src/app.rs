@@ -3363,19 +3363,42 @@ impl HarnessApp {
                             .size(10.5)
                             .color(dot_c),
                     );
-                    // progresso do turno: rodadas gastas do teto (não é ETA)
+                    // Duas fontes de progresso, nesta ordem:
+                    //   1. resposta em curso vs. média de resposta da sessão
+                    //   2. rodadas de tool gastas do teto do turno
+                    // cyrix: a média é heurística — some quando o modelo escreve
+                    // muito mais que o normal; o teto de 99% evita mentir "pronto".
                     let (rn, rmax) = self.turn_round;
-                    if self.busy && rmax > 0 {
-                        let frac = (rn as f32 / rmax as f32).clamp(0.0, 1.0);
+                    let avg = if self.metrics.calls > 0 {
+                        self.metrics.completion_tokens as f32 / self.metrics.calls as f32
+                    } else {
+                        0.0
+                    };
+                    let now_tok = self.stream_buf.chars().count() as f32 / 4.0;
+                    let (frac, tip) = if now_tok > 0.0 && avg > 50.0 {
+                        (
+                            (now_tok / avg).min(0.99),
+                            format!(
+                                "~{now_tok:.0} of ~{avg:.0} tokens — estimated from this \
+                                 session's average answer, not a promise"
+                            ),
+                        )
+                    } else if rmax > 0 {
+                        (
+                            (rn as f32 / rmax as f32).clamp(0.0, 1.0),
+                            format!("tool round {rn} of {rmax} — effort spent in this turn"),
+                        )
+                    } else {
+                        (0.0, String::new())
+                    };
+                    if self.busy && frac > 0.0 {
                         ui.label(
                             egui::RichText::new(format!("{:.0}%", frac * 100.0))
                                 .monospace()
                                 .size(10.5)
                                 .color(p.accent),
                         )
-                        .on_hover_text(format!(
-                            "tool round {rn} of {rmax} — effort spent in this turn, not an ETA"
-                        ));
+                        .on_hover_text(tip);
                         let (bar, _) =
                             ui.allocate_exact_size(egui::vec2(54.0, 4.0), egui::Sense::hover());
                         ui.painter()
