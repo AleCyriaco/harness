@@ -260,6 +260,9 @@ fn chat_stream(
         .bearer_auth(&cfg.api_key)
         .header("Content-Type", "application/json")
         .header("Accept", "text/event-stream")
+        // o teto do cliente cobre a leitura do corpo inteiro; num modelo local
+        // lento isso corta o stream no meio da resposta
+        .timeout(std::time::Duration::from_secs(3600))
         .json(&body)
         .send()
         .context("stream request failed")?;

@@ -199,8 +199,9 @@ struct TokenMeter {
     seen_completion: u64,
 }
 
-/// ~24 s de janela a 200 ms por amostra.
-const METER_SLOTS: usize = 120;
+/// ~2 min de janela a 200 ms por amostra. 24 s era curto demais: a rajada
+/// terminava antes de o usuário olhar e o gráfico parecia morto.
+const METER_SLOTS: usize = 600;
 const METER_TICK_MS: u128 = 200;
 
 impl TokenMeter {
@@ -1939,14 +1940,34 @@ impl HarnessApp {
     }
 
     fn stop_agent(&mut self) {
-        let sid = self.session.meta.daemon_session_id.clone();
+        // parar é parar: o que estava na fila não vira turno novo
+        let dropped = self.queued.len();
+        self.queued.clear();
+        // mesmo fallback do envio — sem ele o Stop desistia calado
+        let sid = if !self.session.meta.daemon_session_id.is_empty() {
+            self.session.meta.daemon_session_id.clone()
+        } else {
+            self.session.meta.id.clone()
+        };
+        let Some(client) = &self.daemon else {
+            self.push_error("daemon not connected — nothing to stop".into());
+            return;
+        };
         if sid.is_empty() {
+            self.push_error("no daemon session to stop".into());
             return;
         }
-        if let Some(client) = &self.daemon {
-            let _ = client.cancel(&sid);
-            self.status = "cancelling…".into();
+        if let Err(e) = client.cancel(&sid) {
+            self.push_error(format!("stop failed: {e}"));
+            return;
         }
+        // honesto: durante o primeiro token de um modelo lento a leitura está
+        // bloqueada e o cancelamento só é visto quando o servidor responde
+        self.status = if dropped > 0 {
+            format!("cancelling… · {dropped} queued dropped · waiting for the current call")
+        } else {
+            "cancelling… · waiting for the current call to answer".into()
+        };
     }
 
     fn handle_slash(&mut self, action: SlashAction) {
@@ -4392,7 +4413,7 @@ impl HarnessApp {
                     fmt_tokens(total as i64)
                 )));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.label(crate::theme::meta("24 s"));
+                    ui.label(crate::theme::meta("2 min"));
                 });
             });
             ui.label(crate::theme::meta(note));
