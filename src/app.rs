@@ -396,6 +396,8 @@ pub struct HarnessApp {
     gauntlet_iter: u32,
     /// Página já anunciada no painel — evita reabrir a cada turno.
     announced_page: Option<PathBuf>,
+    /// Mensagens digitadas enquanto o agente trabalha; vão na ordem, no fim do turno.
+    queued: Vec<String>,
     metrics: crate::metrics::Metrics,
     graph_stats: crate::graph::GraphStats,
     graph_query: String,
@@ -515,6 +517,7 @@ impl HarnessApp {
             swarm_snap: crate::swarm::SwarmSnapshot::default(),
             gauntlet_iter: 0,
             announced_page: None,
+            queued: Vec::new(),
             metrics: crate::metrics::Metrics::default(),
             graph_stats: crate::graph::GraphStats::default(),
             graph_query: String::new(),
@@ -1850,7 +1853,7 @@ impl HarnessApp {
 
     fn send_user_message(&mut self) {
         let text = self.input.trim().to_string();
-        if text.is_empty() || self.busy {
+        if text.is_empty() {
             return;
         }
         if self.cfg.needs_workspace() {
@@ -1874,6 +1877,18 @@ impl HarnessApp {
                 self.handle_slash(other);
                 return;
             }
+        }
+        // Ocupado: guarda e manda no fim do turno. cyrix: fila, não injeção
+        // no turno em andamento — isso exigiria um canal novo até o agente.
+        if self.busy {
+            self.input.clear();
+            self.messages.push(UiMessage {
+                role: "system".into(),
+                text: format!("queued · {text}"),
+            });
+            self.queued.push(text);
+            self.status = format!("queued · {} waiting", self.queued.len());
+            return;
         }
         if self.daemon.is_none() {
             self.connect_daemon_and_session(Some(self.session.meta.chat_dir.clone()));
@@ -2600,9 +2615,13 @@ impl HarnessApp {
             self.persist();
             self.pack_active_tab();
             self.refresh_mem_stats(true);
-            // turno que falhou não é "objetivo incompleto": reenviar
-            // "continue o loop" em cima do erro só multiplica a falha
-            if !cancelled && !turn_failed {
+            // o que você digitou vale mais que o auto-continue do gauntlet
+            if !self.queued.is_empty() {
+                let next = self.queued.remove(0);
+                let draft = std::mem::replace(&mut self.input, next);
+                self.send_user_message();
+                self.input = draft;
+            } else if !cancelled && !turn_failed {
                 self.gauntlet_tick(&last_reply, turn_stuck);
             } else if turn_failed && self.session.meta.gauntlet && self.gauntlet_iter > 0 {
                 self.gauntlet_iter = 0;
@@ -2876,7 +2895,7 @@ impl HarnessApp {
                 i.key_pressed(egui::Key::Escape),
             )
         });
-        if send && !self.busy && !self.cmdk {
+        if send && !self.cmdk {
             self.send_user_message();
         }
         if palette {
@@ -3642,8 +3661,11 @@ impl HarnessApp {
                                     ui.with_layout(
                                         egui::Layout::right_to_left(egui::Align::Center),
                                         |ui| {
-                                            if w::primary_button(ui, "Send", !self.busy)
-                                                .on_hover_text("Ctrl+Enter · ⌘Enter on Mac")
+                                            let label = if self.busy { "Queue" } else { "Send" };
+                                            if w::primary_button(ui, label, true)
+                                                .on_hover_text(
+                                                    "⌘Enter · while the agent works it goes in the queue",
+                                                )
                                                 .clicked()
                                             {
                                                 self.send_user_message();
