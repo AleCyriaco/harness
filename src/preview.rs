@@ -38,17 +38,9 @@ pub enum PreviewContent {
     },
 }
 
-pub fn preview_path(path: &Path) -> PreviewContent {
-    preview_path_inner(path, true)
-}
-
-/// Mesma coisa, mas sem abrir a janela do WebView. Serve para o painel se
-/// preparar sozinho no fim de um turno sem roubar o foco do usuário.
-pub fn preview_path_quiet(path: &Path) -> PreviewContent {
-    preview_path_inner(path, false)
-}
-
-fn preview_path_inner(path: &Path, open_window: bool) -> PreviewContent {
+/// `open_window = false` só serve a pasta: o painel se prepara sozinho no fim
+/// de um turno sem roubar o foco do usuário.
+pub fn preview_path(path: &Path, open_window: bool) -> PreviewContent {
     let title = path
         .file_name()
         .map(|s| s.to_string_lossy().into_owned())
@@ -433,7 +425,7 @@ mod tests {
         let file = dir.join("index.html");
         std::fs::write(&file, "<!doctype html><title>e2e</title><h1>HARNESS_PREVIEW_OK</h1>").unwrap();
 
-        match preview_path(&file) {
+        match preview_path(&file, true) {
             PreviewContent::WebPage { url, .. } => {
                 println!("url = {url}");
                 let body = crate::llm::http_client()
@@ -473,7 +465,7 @@ mod tests {
         )
         .unwrap();
         let p = root.join("p.docx");
-        match preview_path(&p) {
+        match preview_path(&p, true) {
             PreviewContent::Text { body, .. } => {
                 assert!(body.to_lowercase().contains("hello") || body.contains("World"));
             }

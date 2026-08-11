@@ -1823,7 +1823,7 @@ impl HarnessApp {
     }
 
     fn open_preview(&mut self, path: PathBuf) {
-        let content = preview::preview_path(&path);
+        let content = preview::preview_path(&path, true);
         match &content {
             PreviewContent::WebPage { url, path: p, .. } => {
                 self.browser_url = url.clone();
@@ -2587,7 +2587,7 @@ impl HarnessApp {
             // decide ver o jogo é o usuário, no botão Run.
             if let Some(html) = html_artifacts(&self.artifacts).first() {
                 if self.announced_page.as_deref() != Some(html.as_path()) {
-                    let content = preview::preview_path_quiet(html);
+                    let content = preview::preview_path(html, false);
                     if let PreviewContent::WebPage { url, .. } = &content {
                         self.browser_url = url.clone();
                     }

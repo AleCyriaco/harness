@@ -1177,7 +1177,7 @@ pub fn dispatch(
         "preview_file" => {
             let rel = require_str(&args, "path")?;
             let path = safe_join(root, rel)?;
-            Ok(format_preview(&crate::preview::preview_path(&path)))
+            Ok(format_preview(&crate::preview::preview_path(&path, true)))
         }
         "swarm_spawn" => {
             let task = require_str(&args, "task")?;
