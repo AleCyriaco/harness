@@ -394,6 +394,8 @@ pub struct HarnessApp {
     swarm_snap: crate::swarm::SwarmSnapshot,
     /// Auto-continues já gastos no objetivo atual do Gauntlet Loop.
     gauntlet_iter: u32,
+    /// Página já anunciada no painel — evita reabrir a cada turno.
+    announced_page: Option<PathBuf>,
     metrics: crate::metrics::Metrics,
     graph_stats: crate::graph::GraphStats,
     graph_query: String,
@@ -512,6 +514,7 @@ impl HarnessApp {
             server_port: web_port.to_string(),
             swarm_snap: crate::swarm::SwarmSnapshot::default(),
             gauntlet_iter: 0,
+            announced_page: None,
             metrics: crate::metrics::Metrics::default(),
             graph_stats: crate::graph::GraphStats::default(),
             graph_query: String::new(),
@@ -2579,6 +2582,21 @@ impl HarnessApp {
             self.pending_approval = None;
             self.stream_buf.clear();
             self.artifacts = scan_artifacts(&self.session.chat_path(), self.mode);
+            // Gerou uma página nova? Deixa o painel pronto e o mostra uma vez.
+            // `preview_path_quiet` sobe o servidor mas não abre janela — quem
+            // decide ver o jogo é o usuário, no botão Run.
+            if let Some(html) = html_artifacts(&self.artifacts).first() {
+                if self.announced_page.as_deref() != Some(html.as_path()) {
+                    let content = preview::preview_path_quiet(html);
+                    if let PreviewContent::WebPage { url, .. } = &content {
+                        self.browser_url = url.clone();
+                    }
+                    self.preview = Some(content);
+                    self.ctx_tab = CtxTab::Preview;
+                    self.ctx_panel = true;
+                    self.announced_page = Some(html.clone());
+                }
+            }
             self.persist();
             self.pack_active_tab();
             self.refresh_mem_stats(true);
@@ -3661,6 +3679,9 @@ impl HarnessApp {
     /// Painel contextual do chat: Preview / Side (não é mais aba do rail).
     fn context_panel(&mut self, ctx: &egui::Context) {
         let p = pal();
+        // o clique em Run vira ação aqui fora: dentro do painel não dá para
+        // chamar `push_error`, e era assim que a falha sumia
+        let mut want_open: Option<String> = None;
         egui::SidePanel::right("ctx")
             .default_width(320.0)
             .resizable(true)
@@ -3690,16 +3711,49 @@ impl HarnessApp {
                 ui.add_space(8.0);
                 match self.ctx_tab {
                     CtxTab::Preview => match &self.preview {
-                        Some(pv) => render_preview(ui, pv),
+                        Some(pv) => want_open = render_preview(ui, pv),
                         None => {
-                            ui.label(crate::theme::meta(
-                                "Pick a file under FILES to preview",
-                            ));
+                            let htmls = html_artifacts(&self.artifacts);
+                            if htmls.is_empty() {
+                                ui.label(crate::theme::meta(
+                                    "Pick a file under FILES to preview",
+                                ));
+                            } else {
+                                ui.label(crate::theme::meta("Pages in this chat"));
+                                ui.add_space(6.0);
+                                for h in htmls {
+                                    let name = h
+                                        .file_name()
+                                        .and_then(|s| s.to_str())
+                                        .unwrap_or("page")
+                                        .to_string();
+                                    if ui
+                                        .button(
+                                            egui::RichText::new(format!("▶ Run  {name}"))
+                                                .size(14.0),
+                                        )
+                                        .on_hover_text(h.display().to_string())
+                                        .clicked()
+                                    {
+                                        self.open_preview(h.clone());
+                                    }
+                                }
+                            }
                         }
                     },
                     CtxTab::Side => self.side_panel_body(ui),
                 }
             });
+        if let Some(url) = want_open {
+            match browser::open_in_app(&url) {
+                Ok(()) => {
+                    self.status = format!("opened {url} in the WebView window");
+                }
+                Err(e) => self.push_error(format!(
+                    "could not open the WebView window: {e} — the page is served at {url}"
+                )),
+            }
+        }
     }
 
     fn side_panel_body(&mut self, ui: &mut egui::Ui) {
@@ -6679,7 +6733,9 @@ fn short_mem(line: &str) -> String {
 
 
 
-fn render_preview(ui: &mut egui::Ui, p: &PreviewContent) {
+/// Devolve a URL que o usuário pediu para abrir, se pediu.
+fn render_preview(ui: &mut egui::Ui, p: &PreviewContent) -> Option<String> {
+    let mut open: Option<String> = None;
     match p {
         PreviewContent::Text { title, body } => {
             ui.heading(egui::RichText::new(title).size(18.0));
@@ -6726,40 +6782,24 @@ fn render_preview(ui: &mut egui::Ui, p: &PreviewContent) {
         } => {
             ui.heading(egui::RichText::new(format!("🌐 {title}")).size(18.0));
             ui.label(
-                egui::RichText::new("Opened in the harness WebView window")
+                egui::RichText::new("Served locally — Run opens it in the harness WebView")
                     .size(13.0)
                     .weak(),
             );
-            if let Some(st) = ui
+            if ui
                 .add(
                     egui::Button::new(
                         egui::RichText::new(format!("▶ Run  {title}")).size(15.0).strong(),
                     )
                     .min_size(egui::vec2(220.0, 34.0)),
                 )
-                .on_hover_text("Re-open the game / page in the internal WebView")
+                .on_hover_text("Open the page in the internal WebView window")
                 .clicked()
-                .then_some(())
             {
-                if let Err(e) = browser::open_in_app(url) {
-                    // free fn sem push_error — o status global carrega o erro
-                    let _ = e;
-                }
-                let _ = st;
+                open = Some(url.clone());
             }
             ui.label(egui::RichText::new(path).size(12.0).monospace());
             ui.label(egui::RichText::new(url).size(12.0).monospace().strong());
-            ui.horizontal(|ui| {
-                if ui
-                    .button(egui::RichText::new("Reopen WebView").size(15.0).strong())
-                    .clicked()
-                {
-                    if let Err(e) = browser::open_in_app(url) {
-                        // can't push_error from free fn — show in label via status not available
-                        let _ = e;
-                    }
-                }
-            });
             ui.separator();
             ui.label(egui::RichText::new("Source").size(14.0).strong());
             egui::ScrollArea::vertical().show(ui, |ui| {
@@ -6778,6 +6818,7 @@ fn render_preview(ui: &mut egui::Ui, p: &PreviewContent) {
             );
         }
     }
+    open
 }
 
 fn labeled_edit(ui: &mut egui::Ui, label: &str, value: &mut String, password: bool) {
@@ -6793,6 +6834,53 @@ fn labeled_edit(ui: &mut egui::Ui, label: &str, value: &mut String, password: bo
         }
         ui.add(te);
     });
+}
+
+/// HTML gerados neste chat, `web/index.html` primeiro — é o que o usuário
+/// quer ver quando pediu "um jogo em html".
+fn html_artifacts(artifacts: &[PathBuf]) -> Vec<PathBuf> {
+    let mut v: Vec<PathBuf> = artifacts
+        .iter()
+        .filter(|p| {
+            matches!(
+                p.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase).as_deref(),
+                Some("html") | Some("htm")
+            )
+        })
+        .cloned()
+        .collect();
+    v.sort_by_key(|p| {
+        let name = p.file_name().and_then(|s| s.to_str()).unwrap_or("");
+        let idx = if name.eq_ignore_ascii_case("index.html") { 0 } else { 1 };
+        (idx, p.components().count())
+    });
+    v
+}
+
+#[cfg(test)]
+mod preview_pick {
+    use super::*;
+
+    #[test]
+    fn index_html_vem_primeiro_e_o_resto_por_profundidade() {
+        let a = vec![
+            PathBuf::from("/c/deep/nested/page.html"),
+            PathBuf::from("/c/main.rs"),
+            PathBuf::from("/c/about.html"),
+            PathBuf::from("/c/web/index.html"),
+            PathBuf::from("/c/notes.md"),
+        ];
+        let got = html_artifacts(&a);
+        assert_eq!(got[0], PathBuf::from("/c/web/index.html"), "index manda");
+        assert_eq!(got.len(), 3, "só html: {got:?}");
+        assert_eq!(got[1], PathBuf::from("/c/about.html"), "mais raso antes");
+    }
+
+    #[test]
+    fn chat_sem_pagina_nao_inventa() {
+        let a = vec![PathBuf::from("/c/main.rs"), PathBuf::from("/c/a.md")];
+        assert!(html_artifacts(&a).is_empty());
+    }
 }
 
 fn scan_artifacts(root: &std::path::Path, mode: AppMode) -> Vec<PathBuf> {

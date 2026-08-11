@@ -39,6 +39,16 @@ pub enum PreviewContent {
 }
 
 pub fn preview_path(path: &Path) -> PreviewContent {
+    preview_path_inner(path, true)
+}
+
+/// Mesma coisa, mas sem abrir a janela do WebView. Serve para o painel se
+/// preparar sozinho no fim de um turno sem roubar o foco do usuário.
+pub fn preview_path_quiet(path: &Path) -> PreviewContent {
+    preview_path_inner(path, false)
+}
+
+fn preview_path_inner(path: &Path, open_window: bool) -> PreviewContent {
     let title = path
         .file_name()
         .map(|s| s.to_string_lossy().into_owned())
@@ -49,7 +59,7 @@ pub fn preview_path(path: &Path) -> PreviewContent {
         .unwrap_or("")
         .to_ascii_lowercase();
     match ext.as_str() {
-        "html" | "htm" => preview_html(path, &title),
+        "html" | "htm" => preview_html(path, &title, open_window),
         "docx" => match preview_docx(path) {
             Ok(body) => PreviewContent::Text {
                 title,
@@ -103,7 +113,7 @@ pub fn preview_path(path: &Path) -> PreviewContent {
 }
 
 /// Serve the HTML's directory (or nearest `web/` parent) and open in harness WebView.
-fn preview_html(path: &Path, title: &str) -> PreviewContent {
+fn preview_html(path: &Path, title: &str, open_window: bool) -> PreviewContent {
     let abs = path
         .canonicalize()
         .unwrap_or_else(|_| path.to_path_buf());
@@ -111,7 +121,12 @@ fn preview_html(path: &Path, title: &str) -> PreviewContent {
         .map(|s| truncate(&s, 8_000))
         .unwrap_or_default();
 
-    match open_html_as_web_preview(&abs) {
+    let served = if open_window {
+        open_html_as_web_preview(&abs)
+    } else {
+        serve_html(&abs)
+    };
+    match served {
         Ok(url) => PreviewContent::WebPage {
             title: title.to_string(),
             path: abs.display().to_string(),
@@ -139,7 +154,9 @@ fn preview_html(path: &Path, title: &str) -> PreviewContent {
 
 /// Prefer HTTP via tiny server so relative CSS/JS work; root = parent dir of the html
 /// (or the `web/` folder if the file lives under it).
-pub fn open_html_as_web_preview(html_path: &Path) -> anyhow::Result<String> {
+/// Sobe o servidor estático na pasta certa e devolve a URL — **sem** abrir
+/// janela. Auto-preview usa esta; clique do usuário usa a versão que abre.
+pub fn serve_html(html_path: &Path) -> anyhow::Result<String> {
     let abs = html_path
         .canonicalize()
         .with_context(|| format!("resolve {}", html_path.display()))?;
@@ -161,6 +178,11 @@ pub fn open_html_as_web_preview(html_path: &Path) -> anyhow::Result<String> {
         format!("{}{rel}", st.url)
     };
     crate::browser::set_url(&url);
+    Ok(url)
+}
+
+pub fn open_html_as_web_preview(html_path: &Path) -> anyhow::Result<String> {
+    let url = serve_html(html_path)?;
     crate::browser::open_in_app(&url)?;
     Ok(url)
 }
@@ -400,6 +422,37 @@ fn truncate(s: &str, max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Faz o que o botão **Run** faz: serve a pasta e abre a janela.
+    /// `cargo test -- --ignored abre_html_como_o_botao_run --nocapture`
+    #[test]
+    #[ignore]
+    fn abre_html_como_o_botao_run() {
+        let dir = std::env::temp_dir().join("harness_preview_e2e/web");
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("index.html");
+        std::fs::write(&file, "<!doctype html><title>e2e</title><h1>HARNESS_PREVIEW_OK</h1>").unwrap();
+
+        match preview_path(&file) {
+            PreviewContent::WebPage { url, .. } => {
+                println!("url = {url}");
+                let body = crate::llm::http_client()
+                    .get(&url)
+                    .send()
+                    .expect("servidor no ar")
+                    .text()
+                    .unwrap_or_default();
+                assert!(
+                    body.contains("HARNESS_PREVIEW_OK"),
+                    "o servidor tem que entregar o arquivo, veio: {}",
+                    body.chars().take(200).collect::<String>()
+                );
+                println!("servidor OK — janela do WebView foi pedida");
+            }
+            other => panic!("html devia virar WebPage, veio {other:?}"),
+        }
+        std::thread::sleep(std::time::Duration::from_secs(6));
+    }
     use crate::config::Config;
     use crate::modes::AppMode;
     use crate::tools;

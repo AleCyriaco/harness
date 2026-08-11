@@ -280,10 +280,15 @@ pub fn parse_stream<R: BufRead>(
     mut reader: R,
     acc: &mut Acc,
     mut on_delta: Option<&mut StreamCb>,
+    cancel: &AtomicBool,
 ) -> Result<()> {
     let mut line = String::new();
     let mut data_buf = String::new();
     loop {
+        // sem isto o Stop não interrompe um stream em andamento
+        if cancel.load(Ordering::Relaxed) {
+            bail!("cancelled");
+        }
         line.clear();
         if reader.read_line(&mut line)? == 0 {
             break;
@@ -378,7 +383,7 @@ pub fn chat(
     }
 
     let mut acc = Acc::default();
-    parse_stream(BufReader::new(resp), &mut acc, on_delta.as_deref_mut())?;
+    parse_stream(BufReader::new(resp), &mut acc, on_delta.as_deref_mut(), cancel)?;
 
     if acc.prompt_tokens > 0 || acc.completion_tokens > 0 {
         let (pi, po) = crate::llm_pool::active_price(cfg);
@@ -424,13 +429,33 @@ mod tests {
     #[test]
     fn evento_de_criacao_nao_encerra_o_stream() {
         let mut acc = Acc::default();
-        parse_stream(std::io::Cursor::new(SSE), &mut acc, None).unwrap();
+        parse_stream(
+            std::io::Cursor::new(SSE),
+            &mut acc,
+            None,
+            &AtomicBool::new(false),
+        )
+        .unwrap();
         assert_eq!(acc.text, "HARNESS_OK", "o texto do stream tem que chegar inteiro");
         assert!(acc.done, "o `response.completed` fecha");
         assert_eq!(acc.prompt_tokens, 10);
         assert_eq!(acc.completion_tokens, 3);
         let reply = into_reply(acc).expect("não pode dizer que não veio nada");
         assert_eq!(reply.message.content.as_deref(), Some("HARNESS_OK"));
+    }
+
+    #[test]
+    fn cancelar_interrompe_o_stream() {
+        let mut acc = Acc::default();
+        let err = parse_stream(
+            std::io::Cursor::new(SSE),
+            &mut acc,
+            None,
+            &AtomicBool::new(true),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("cancelled"));
+        assert!(acc.text.is_empty());
     }
 
     /// O corpo não-stream (sem `type`) continua sendo aceito inteiro.
