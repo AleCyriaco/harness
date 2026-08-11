@@ -64,6 +64,9 @@ pub enum ClientMsg {
         /// Gauntlet Loop deste chat. Ausente = daemon mantém o que sabia.
         #[serde(default)]
         gauntlet: Option<bool>,
+        /// Esforço de raciocínio deste chat. Ausente = mantém.
+        #[serde(default)]
+        effort: Option<String>,
     },
     Cancel {
         session_id: String,

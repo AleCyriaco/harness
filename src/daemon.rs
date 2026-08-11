@@ -31,6 +31,8 @@ struct LiveSession {
     token_less: Option<crate::tokenless::TokenLessLevel>,
     /// Gauntlet Loop ligado neste chat (o cliente manda a cada mensagem).
     gauntlet: bool,
+    /// Esforço de raciocínio deste chat.
+    effort: Option<String>,
 }
 
 struct DaemonState {
@@ -127,6 +129,7 @@ fn restore_sessions_from_disk(state: &mut DaemonState) {
                 subscribers: Vec::new(),
                 token_less: None,
                 gauntlet: false,
+                effort: None,
             },
         );
     }
@@ -415,8 +418,9 @@ fn handle_msg(
             text,
             token_less,
             gauntlet,
+            effort,
         } => {
-            if token_less.is_some() || gauntlet.is_some() {
+            if token_less.is_some() || gauntlet.is_some() || effort.is_some() {
                 let mut g = state.lock().unwrap();
                 if let Some(s) = g.sessions.get_mut(&session_id) {
                     if let Some(level) = token_less
@@ -427,6 +431,9 @@ fn handle_msg(
                     }
                     if let Some(on) = gauntlet {
                         s.gauntlet = on;
+                    }
+                    if let Some(e) = effort {
+                        s.effort = Some(e);
                     }
                 }
             }
@@ -538,6 +545,7 @@ fn create_or_restore(
                     subscribers: vec![client_id],
                     token_less: None,
                     gauntlet: false,
+                    effort: None,
                 },
             );
             drop(g);
@@ -614,6 +622,7 @@ fn create_or_restore(
                 daemon_session_id: id,
                 token_less: None,
                 gauntlet: false,
+                effort: None,
                 pinned: false,
                 project_dir: None,
                 title_locked: false,
@@ -644,6 +653,7 @@ fn create_or_restore(
             subscribers: vec![client_id],
             token_less: None,
             gauntlet: false,
+            effort: None,
         },
     );
     drop(g);
@@ -689,6 +699,7 @@ fn attach_session(
                         subscribers: Vec::new(),
                         token_less: None,
                         gauntlet: false,
+                        effort: None,
                     },
                 );
             }
@@ -867,6 +878,9 @@ fn start_turn(
             cfg.token_less = level;
         }
         cfg.gauntlet = s.gauntlet;
+        if let Some(e) = &s.effort {
+            cfg.reasoning_effort = e.clone();
+        }
         let guard = s.session.meta.project_dir.is_some();
         (cfg, s.mode, s.history.clone(), guard)
     };

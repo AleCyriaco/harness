@@ -420,6 +420,21 @@ fn apply_stream_chunk(
 }
 
 fn completion_body(cfg: &Config, messages: &[ChatMessage], tools: &[Value], stream: bool) -> Value {
+    let mut body = completion_body_base(cfg, messages, tools, stream);
+    // Só sai do padrão quando o usuário pediu: servidor que não conhece o
+    // campo devolve 400, e não vale quebrar quem nunca mexeu nisso.
+    if cfg.reasoning_effort != "medium" {
+        body["reasoning_effort"] = Value::String(cfg.reasoning_effort.clone());
+    }
+    body
+}
+
+fn completion_body_base(
+    cfg: &Config,
+    messages: &[ChatMessage],
+    tools: &[Value],
+    stream: bool,
+) -> Value {
     if tools.is_empty() {
         json!({
             "model": cfg.model,

@@ -75,6 +75,10 @@ pub struct Config {
     /// N do detector acima.
     #[serde(default = "default_stuck_threshold")]
     pub stuck_threshold: u32,
+    /// Esforço de raciocínio pedido ao modelo: "low" | "medium" | "high".
+    /// Padrão para chats novos; cada chat pode sobrescrever.
+    #[serde(default = "default_effort")]
+    pub reasoning_effort: String,
     /// Gauntlet Loop ligado neste turno. Vive no chat, não no config.toml —
     /// o daemon copia do `LiveSession` para o `cfg` do turno.
     #[serde(skip)]
@@ -135,6 +139,9 @@ fn default_web_port() -> u16 {
 fn default_max_sessions() -> usize {
     32
 }
+fn default_effort() -> String {
+    "medium".into()
+}
 fn default_crawl_pages() -> u32 {
     20
 }
@@ -186,6 +193,7 @@ impl Default for Config {
             mode: AppMode::Code,
             theme: crate::theme::ThemeMode::default(),
             usage_pinned: false,
+            reasoning_effort: default_effort(),
             web_markdown: true,
             web_crawl_max_pages: default_crawl_pages(),
             web_crawl_max_depth: default_crawl_depth(),
@@ -283,6 +291,9 @@ impl Config {
         cfg.web_crawl_max_pages = cfg.web_crawl_max_pages.clamp(1, 200);
         cfg.web_crawl_max_depth = cfg.web_crawl_max_depth.clamp(0, 5);
         cfg.stuck_threshold = cfg.stuck_threshold.clamp(2, 20);
+        if !matches!(cfg.reasoning_effort.as_str(), "low" | "medium" | "high") {
+            cfg.reasoning_effort = default_effort();
+        }
         if cfg.llm_rotate_minutes == 0 {
             cfg.llm_rotate_minutes = default_rotate_minutes();
         }
@@ -382,4 +393,21 @@ pub fn ensure_workspace_layout(root: &Path) -> Result<()> {
         );
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn esforco_nasce_medio_e_recusa_valor_invalido() {
+        assert_eq!(Config::default().reasoning_effort, "medium");
+        let mut cfg = Config::default();
+        cfg.reasoning_effort = "turbo".into();
+        // mesma validação de `load`
+        if !matches!(cfg.reasoning_effort.as_str(), "low" | "medium" | "high") {
+            cfg.reasoning_effort = default_effort();
+        }
+        assert_eq!(cfg.reasoning_effort, "medium");
+    }
 }

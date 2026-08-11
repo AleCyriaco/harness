@@ -23,7 +23,7 @@ use crate::llm::{ChatMessage, FunctionCall, LlmReply, StreamCb, ToolCall};
 /// Valores do snippet do usuário.
 const TEMPERATURE: f32 = 0.6;
 const TOP_P: f32 = 0.9;
-const REASONING_EFFORT: &str = "medium";
+
 
 /// Limite de saída por modelo. muse-spark-1.2 aceita 131072; os demais ficam
 /// em 32768, valor seguro para a maioria dos modelos reasoning. Teto baixo
@@ -96,7 +96,7 @@ pub fn build_body(cfg: &Config, messages: &[ChatMessage], tools: &[Value], strea
         "temperature": TEMPERATURE,
         "max_output_tokens": max_output_tokens(&cfg.model),
         "top_p": TOP_P,
-        "reasoning": {"effort": REASONING_EFFORT},
+        "reasoning": {"effort": cfg.reasoning_effort.as_str()},
     });
     if !tools.is_empty() {
         body["tools"] = Value::Array(flatten_tools(tools));

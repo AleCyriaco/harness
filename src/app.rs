@@ -1456,6 +1456,26 @@ impl HarnessApp {
         }
     }
 
+    /// Esforço deste chat, ou o padrão global.
+    fn effort(&self) -> String {
+        self.session
+            .meta
+            .effort
+            .clone()
+            .unwrap_or_else(|| self.cfg.reasoning_effort.clone())
+    }
+
+    fn cycle_effort(&mut self) {
+        let next = match self.effort().as_str() {
+            "low" => "medium",
+            "medium" => "high",
+            _ => "low",
+        };
+        self.session.meta.effort = Some(next.into());
+        self.persist();
+        self.status = format!("reasoning effort: {next}");
+    }
+
     fn set_gauntlet(&mut self, on: bool) {
         self.session.meta.gauntlet = on;
         self.gauntlet_iter = 0;
@@ -1932,7 +1952,13 @@ impl HarnessApp {
             self.gauntlet_iter = 0;
         }
         let token_less = self.session.meta.token_less.unwrap_or(self.cfg.token_less);
-        if let Err(e) = client.user_message(&sid, &text, Some(token_less), Some(self.session.meta.gauntlet)) {
+        if let Err(e) = client.user_message(
+            &sid,
+            &text,
+            Some(token_less),
+            Some(self.session.meta.gauntlet),
+            Some(self.effort()),
+        ) {
             self.push_error(format!("daemon send: {e}"));
             return;
         }
@@ -3697,6 +3723,25 @@ impl HarnessApp {
                                         self.cmdk = true;
                                         self.cmdk_query = "llm ".into();
                                         self.cmdk_sel = 0;
+                                    }
+                                    let eff = self.effort();
+                                    // cyrix: rótulo curto — a fila de pills já
+                                    // estourava a largura do composer
+                                    let eff_short = match eff.as_str() {
+                                        "low" => "low",
+                                        "high" => "high",
+                                        _ => "med",
+                                    };
+                                    if w::pill_toggle(ui, eff_short, eff != "medium")
+                                    .on_hover_text(
+                                        "Reasoning depth asked of the model — low → medium → \
+                                         high. Sent as `reasoning.effort` on the Responses API; \
+                                         on Chat Completions it only travels when you leave \
+                                         medium.",
+                                    )
+                                    .clicked()
+                                    {
+                                        self.cycle_effort();
                                     }
                                     let tlc = self.token_less_level();
                                     let chip_txt = if tlc.is_on() {

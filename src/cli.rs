@@ -365,6 +365,7 @@ fn cli_attach_session(id_or_prefix: &str) -> Result<()> {
                 text: line,
                 token_less: None,
                 gauntlet: None,
+                effort: None,
             },
         )?;
         loop {
@@ -496,6 +497,7 @@ fn cli_run(prompt: &str, tcp: bool) -> Result<()> {
             text: prompt.into(),
             token_less: None,
             gauntlet: None,
+            effort: None,
         },
     )?;
     loop {
@@ -622,6 +624,7 @@ fn cli_connect_repl() -> Result<()> {
                 text: line,
                 token_less: None,
                 gauntlet: None,
+                effort: None,
             },
         )?;
         // drain until done

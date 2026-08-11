@@ -41,6 +41,9 @@ pub struct SessionMeta {
     /// Gauntlet Loop ligado neste chat.
     #[serde(default)]
     pub gauntlet: bool,
+    /// Esforço de raciocínio deste chat ("low"/"medium"/"high").
+    #[serde(default)]
+    pub effort: Option<String>,
     /// Título posto à mão — o auto-título da primeira mensagem não o sobrescreve.
     #[serde(default)]
     pub title_locked: bool,
@@ -81,6 +84,7 @@ impl Session {
                 pinned: false,
                 project_dir: None,
                 gauntlet: false,
+                effort: None,
                 title_locked: false,
             },
             messages: Vec::new(),
@@ -123,6 +127,7 @@ impl Session {
                 pinned: false,
                 project_dir: None,
                 gauntlet: false,
+                effort: None,
                 title_locked: false,
             },
             messages: Vec::new(),
@@ -450,6 +455,7 @@ mod tests {
                 pinned: false,
                 project_dir: None,
                 gauntlet: false,
+                effort: None,
                 title_locked: false,
             },
             messages: Vec::new(),
