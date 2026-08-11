@@ -2460,6 +2460,7 @@ impl HarnessApp {
         let mut final_reply = None;
         let mut cancelled = false;
         let mut turn_stuck = false;
+        let mut turn_failed = false;
 
         for ev in events {
             match ev {
@@ -2523,6 +2524,7 @@ impl HarnessApp {
                 }
                 AgentEvent::Error(e) => {
                     self.push_error(e);
+                    turn_failed = true;
                     done = true;
                 }
                 AgentEvent::Cancelled => {
@@ -2580,8 +2582,13 @@ impl HarnessApp {
             self.persist();
             self.pack_active_tab();
             self.refresh_mem_stats(true);
-            if !cancelled {
+            // turno que falhou não é "objetivo incompleto": reenviar
+            // "continue o loop" em cima do erro só multiplica a falha
+            if !cancelled && !turn_failed {
                 self.gauntlet_tick(&last_reply, turn_stuck);
+            } else if turn_failed && self.session.meta.gauntlet && self.gauntlet_iter > 0 {
+                self.gauntlet_iter = 0;
+                self.status = "gauntlet loop: stopped — the turn failed".into();
             }
         } else if self.busy || self.open_tabs.iter().any(|t| t.busy) {
             ctx.request_repaint_after(std::time::Duration::from_millis(33));

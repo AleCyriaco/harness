@@ -195,8 +195,13 @@ pub fn apply_event(v: &Value, acc: &mut Acc, mut on_delta: Option<&mut StreamCb>
         }
         return;
     }
-    // objeto final sem nome esperado
-    if v.get("response").and_then(|r| r.get("output")).is_some() {
+    // Objeto final **sem** `type`: é a resposta não-stream inteira.
+    //
+    // Este ramo não pode olhar só para `response.output`: eventos de ciclo de
+    // vida (`response.created`, `response.in_progress`) carregam a mesma chave
+    // com `output: []`, e tratá-los como final encerrava o stream no primeiro
+    // evento — o servidor mandava o texto e o harness dizia "nothing usable".
+    if kind.is_empty() && v.get("response").and_then(|r| r.get("output")).is_some() {
         absorb_final(v.get("response").unwrap(), acc);
         acc.done = true;
         return;
@@ -269,6 +274,51 @@ fn absorb_final(resp: &Value, acc: &mut Acc) {
     }
 }
 
+/// Lê o SSE linha a linha e alimenta o acumulador. Separado de `chat` para
+/// poder ser testado com os bytes reais de uma captura, sem rede.
+pub fn parse_stream<R: BufRead>(
+    mut reader: R,
+    acc: &mut Acc,
+    mut on_delta: Option<&mut StreamCb>,
+) -> Result<()> {
+    let mut line = String::new();
+    let mut data_buf = String::new();
+    loop {
+        line.clear();
+        if reader.read_line(&mut line)? == 0 {
+            break;
+        }
+        let trimmed = line.trim_end();
+        if let Some(rest) = trimmed.strip_prefix("data:") {
+            data_buf.push_str(rest.trim_start());
+            continue;
+        }
+        if !trimmed.is_empty() {
+            // linhas `event:` / `id:` não carregam corpo
+            continue;
+        }
+        if data_buf.is_empty() {
+            continue;
+        }
+        let payload = std::mem::take(&mut data_buf);
+        if payload == "[DONE]" {
+            break;
+        }
+        if let Ok(v) = serde_json::from_str::<Value>(&payload) {
+            apply_event(&v, acc, on_delta.as_deref_mut());
+        }
+        if acc.done {
+            break;
+        }
+    }
+    if !data_buf.is_empty() {
+        if let Ok(v) = serde_json::from_str::<Value>(&data_buf) {
+            apply_event(&v, acc, on_delta.as_deref_mut());
+        }
+    }
+    Ok(())
+}
+
 /// Vira a resposta que o resto do harness espera.
 pub fn into_reply(acc: Acc) -> Result<LlmReply> {
     if acc.text.is_empty() && acc.calls.is_empty() {
@@ -327,47 +377,8 @@ pub fn chat(
         bail!("LLM HTTP {status}: {text}");
     }
 
-    let mut reader = BufReader::new(resp);
     let mut acc = Acc::default();
-    let mut line = String::new();
-    let mut data_buf = String::new();
-
-    loop {
-        if cancel.load(Ordering::Relaxed) {
-            bail!("cancelled");
-        }
-        line.clear();
-        if reader.read_line(&mut line)? == 0 {
-            break;
-        }
-        let trimmed = line.trim_end();
-        if let Some(rest) = trimmed.strip_prefix("data:") {
-            data_buf.push_str(rest.trim_start());
-            continue;
-        }
-        if !trimmed.is_empty() {
-            // linhas `event:` / `id:` não carregam corpo
-            continue;
-        }
-        if data_buf.is_empty() {
-            continue;
-        }
-        let payload = std::mem::take(&mut data_buf);
-        if payload == "[DONE]" {
-            break;
-        }
-        if let Ok(v) = serde_json::from_str::<Value>(&payload) {
-            apply_event(&v, &mut acc, on_delta.as_deref_mut());
-        }
-        if acc.done {
-            break;
-        }
-    }
-    if !data_buf.is_empty() {
-        if let Ok(v) = serde_json::from_str::<Value>(&data_buf) {
-            apply_event(&v, &mut acc, on_delta.as_deref_mut());
-        }
-    }
+    parse_stream(BufReader::new(resp), &mut acc, on_delta.as_deref_mut())?;
 
     if acc.prompt_tokens > 0 || acc.completion_tokens > 0 {
         let (pi, po) = crate::llm_pool::active_price(cfg);
@@ -387,6 +398,113 @@ pub fn chat(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Bytes reais de uma resposta do muse. O `response.created` traz
+    /// `output: []`, que antes era confundido com o objeto final e cortava o
+    /// stream no primeiro evento.
+    const SSE: &str = concat!(
+        "event: response.created\n",
+        "data: {\"response\":{\"id\":\"resp_1\",\"output\":[],\"status\":\"in_progress\"},\"sequence_number\":0,\"type\":\"response.created\"}\n",
+        "\n",
+        "event: response.in_progress\n",
+        "data: {\"response\":{\"id\":\"resp_1\",\"output\":[],\"status\":\"in_progress\"},\"sequence_number\":1,\"type\":\"response.in_progress\"}\n",
+        "\n",
+        "event: response.output_text.delta\n",
+        "data: {\"content_index\":0,\"delta\":\"HARNESS\",\"item_id\":\"msg_1\",\"output_index\":1,\"type\":\"response.output_text.delta\"}\n",
+        "\n",
+        "event: response.output_text.delta\n",
+        "data: {\"content_index\":0,\"delta\":\"_OK\",\"item_id\":\"msg_1\",\"output_index\":1,\"type\":\"response.output_text.delta\"}\n",
+        "\n",
+        "event: response.completed\n",
+        "data: {\"response\":{\"id\":\"resp_1\",\"output\":[{\"content\":[{\"text\":\"HARNESS_OK\",\"type\":\"output_text\"}],\"role\":\"assistant\",\"type\":\"message\"}],\"status\":\"completed\",\"usage\":{\"input_tokens\":10,\"output_tokens\":3}},\"type\":\"response.completed\"}\n",
+        "\n",
+        "data: [DONE]\n\n",
+    );
+
+    #[test]
+    fn evento_de_criacao_nao_encerra_o_stream() {
+        let mut acc = Acc::default();
+        parse_stream(std::io::Cursor::new(SSE), &mut acc, None).unwrap();
+        assert_eq!(acc.text, "HARNESS_OK", "o texto do stream tem que chegar inteiro");
+        assert!(acc.done, "o `response.completed` fecha");
+        assert_eq!(acc.prompt_tokens, 10);
+        assert_eq!(acc.completion_tokens, 3);
+        let reply = into_reply(acc).expect("não pode dizer que não veio nada");
+        assert_eq!(reply.message.content.as_deref(), Some("HARNESS_OK"));
+    }
+
+    /// O corpo não-stream (sem `type`) continua sendo aceito inteiro.
+    #[test]
+    fn resposta_nao_stream_ainda_e_absorvida() {
+        let body = serde_json::json!({
+            "response": {
+                "output": [{"content": [{"text": "OK", "type": "output_text"}],
+                            "role": "assistant", "type": "message"}],
+                "status": "completed"
+            }
+        });
+        let mut acc = Acc::default();
+        apply_event(&body, &mut acc, None);
+        assert_eq!(acc.text, "OK");
+        assert!(acc.done);
+    }
+
+    /// Reproduz o corpo **real** do app (system prompt + todas as tools) contra
+    /// o endpoint meta do config do usuário, para ver o que volta de fato.
+    /// `cargo test -- --ignored muse_com_o_corpo_do_app --nocapture`
+    #[test]
+    #[ignore]
+    fn muse_com_o_corpo_do_app() {
+        let disk = Config::load();
+        let Some(ep) = disk
+            .llm_pool
+            .iter()
+            .find(|e| e.api_base.contains("meta.ai") && !e.api_key.trim().is_empty())
+        else {
+            println!("sem endpoint meta com key — nada a testar");
+            return;
+        };
+        let mut cfg = disk.clone();
+        ep.apply_to(&mut cfg);
+
+        let mode = crate::modes::AppMode::Code;
+        let tools = crate::tools::tool_schemas(mode);
+        let sys = crate::llm::system_prompt(mode, "/tmp");
+        let messages = vec![
+            crate::llm::ChatMessage {
+                role: "system".into(),
+                content: Some(sys.clone()),
+                tool_calls: None,
+                tool_call_id: None,
+                name: None,
+            },
+            crate::llm::ChatMessage {
+                role: "user".into(),
+                content: Some("Reply with exactly: HARNESS_OK".into()),
+                tool_calls: None,
+                tool_call_id: None,
+                name: None,
+            },
+        ];
+        let body = build_body(&cfg, &messages, &tools, true);
+        println!(
+            "model={} tools={} system={} chars · body={} KB",
+            cfg.model,
+            tools.len(),
+            sys.len(),
+            serde_json::to_string(&body).unwrap().len() / 1024
+        );
+
+        let cancel = AtomicBool::new(false);
+        match chat(&cfg, &messages, &tools, &cancel, None) {
+            Ok(r) => println!(
+                "OK · content={:?} · tool_calls={}",
+                r.message.content.as_deref().map(|s| s.chars().take(120).collect::<String>()),
+                r.message.tool_calls.map(|c| c.len()).unwrap_or(0)
+            ),
+            Err(e) => println!("FALHOU: {e}"),
+        }
+    }
 
     fn msg(role: &str, text: &str) -> ChatMessage {
         ChatMessage {
