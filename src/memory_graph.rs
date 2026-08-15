@@ -37,6 +37,11 @@ fn db() -> Result<Connection> {
     Ok(conn)
 }
 
+/// Que tipos de nó viram memória buscável. `drift` não é fato.
+pub fn mirrors_to_memory(kind: &str) -> bool {
+    kind != "drift"
+}
+
 pub fn add_node(text: &str, kind: &str) -> Result<i64> {
     let conn = db()?;
     let emb = embed(text);
@@ -50,8 +55,13 @@ pub fn add_node(text: &str, kind: &str) -> Result<i64> {
         params![text, kind, blob, now],
     )?;
     let id = conn.last_insert_rowid();
-    // Also mirror into flat memory store for search compatibility
-    let _ = memory::with_store(|s| s.store(text, kind));
+    // Espelha no store plano só o que vale ser lembrado. Marcador de deriva é
+    // sinal do grafo, não fato: espelhá-lo plantava o pedido do usuário como
+    // "memória", e o auto-recall injetava esse pedido em chats seguintes — o
+    // agente refazia o jogo antigo em vez do que foi pedido agora.
+    if mirrors_to_memory(kind) {
+        let _ = memory::with_store(|s| s.store(text, kind));
+    }
     // Link to similar existing nodes
     link_similar(&conn, id, &emb)?;
     Ok(id)
@@ -202,5 +212,17 @@ pub fn on_user_message(text: &str) {
         }
         // store a drift marker
         let _ = add_node(&format!("topic shift: {}", text.chars().take(160).collect::<String>()), "drift");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn marcador_de_deriva_nao_vira_memoria() {
+        assert!(!mirrors_to_memory("drift"));
+        assert!(mirrors_to_memory("note"));
+        assert!(mirrors_to_memory("fact"));
     }
 }

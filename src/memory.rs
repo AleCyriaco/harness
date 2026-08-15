@@ -309,7 +309,12 @@ pub fn maybe_extract_from_turn(user: &str, assistant: &str) -> usize {
 pub fn recall_for_prompt(query: &str, k: usize) -> String {
     match with_store(|s| s.search(query, k)) {
         Ok(hits) if !hits.is_empty() => {
-            let mut out = String::from("Relevant memories:\n");
+            // Rótulo explícito: sem isto o modelo lê um pedido antigo como se
+            // fosse o atual.
+            let mut out = String::from(
+                "Background from earlier sessions — context only. \
+                 The current request is the user's last message, not any of these:\n",
+            );
             for h in hits {
                 if h.score < 0.08 {
                     continue;
