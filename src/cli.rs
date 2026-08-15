@@ -55,6 +55,45 @@ pub fn dispatch(args: &[String]) -> Result<bool> {
             }
             Ok(true)
         }
+        "reset" => {
+            let keys = args.iter().any(|a| a == "--keys" || a == "--all");
+            let force = args.iter().any(|a| a == "--force" || a == "-y");
+            let targets = crate::config::reset_targets(keys);
+            let present: Vec<_> = targets.iter().filter(|p| p.exists()).collect();
+            if present.is_empty() {
+                println!("nothing to reset — no local state found");
+                return Ok(true);
+            }
+            println!("harness reset will delete:");
+            for p in &present {
+                println!("  {}", p.display());
+            }
+            println!("(your workspace and generated files are never touched)");
+            if !force {
+                print!("type 'yes' to confirm: ");
+                use std::io::Write;
+                std::io::stdout().flush().ok();
+                let mut answer = String::new();
+                std::io::stdin().read_line(&mut answer)?;
+                if answer.trim() != "yes" {
+                    println!("aborted");
+                    return Ok(true);
+                }
+            }
+            for p in present {
+                let r = if p.is_dir() {
+                    std::fs::remove_dir_all(p)
+                } else {
+                    std::fs::remove_file(p)
+                };
+                match r {
+                    Ok(()) => println!("removed {}", p.display()),
+                    Err(e) => eprintln!("could not remove {}: {e}", p.display()),
+                }
+            }
+            println!("done — kill the daemon so it forgets the sessions: pkill -f \"harness serve\"");
+            Ok(true)
+        }
         "doctor" => {
             crate::provider_doctor::run()?;
             Ok(true)
@@ -100,6 +139,9 @@ Self-dev:
 
 Other:
   harness doctor           provider / env check
+  harness reset [--keys] [--force]
+                           wipe sessions, memory and graph (never the workspace;
+                           --keys also drops config.toml with your API keys)
   harness --webview <url>  internal WebView
   harness help
 "#,

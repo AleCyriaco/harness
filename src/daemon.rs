@@ -35,6 +35,8 @@ struct LiveSession {
     effort: Option<String>,
     /// Objetivo do chat.
     goal: String,
+    /// Prompts recorrentes deste chat (vivem enquanto o daemon viver).
+    jobs: Vec<crate::schedule::Job>,
 }
 
 struct DaemonState {
@@ -59,6 +61,7 @@ pub fn run_server(cfg: Config, tcp: bool) -> Result<()> {
         state.sessions.len()
     );
     let state = Arc::new(Mutex::new(state));
+    spawn_scheduler(Arc::clone(&state));
 
     if tcp || cfg!(windows) {
         let addr = crate::protocol::default_tcp_addr();
@@ -103,6 +106,43 @@ pub fn run_server(cfg: Config, tcp: bool) -> Result<()> {
     Ok(())
 }
 
+/// Relógio do scheduling: acorda a cada 30 s, cobra os agendamentos vencidos e
+/// manda o prompt como se o usuário tivesse digitado. Sessão ocupada é pulada.
+const SCHED_TICK_SECS: u64 = 30;
+
+fn spawn_scheduler(state: Arc<Mutex<DaemonState>>) {
+    thread::spawn(move || loop {
+        thread::sleep(std::time::Duration::from_secs(SCHED_TICK_SECS));
+        // decide fora do lock: start_turn tranca de novo
+        let due: Vec<(String, String)> = {
+            let mut g = match state.lock() {
+                Ok(g) => g,
+                Err(_) => continue,
+            };
+            let mut out = Vec::new();
+            for (id, s) in g.sessions.iter_mut() {
+                if s.jobs.is_empty() {
+                    continue;
+                }
+                let busy = s.busy;
+                for p in crate::schedule::tick(&mut s.jobs, SCHED_TICK_SECS, busy) {
+                    out.push((id.clone(), p));
+                }
+            }
+            out
+        };
+        for (id, prompt) in due {
+            let (tx, rx) = mpsc::channel();
+            // o turno roda mesmo sem cliente conectado; os eventos vão para os
+            // assinantes por broadcast, este canal só recolhe o Ok/Error
+            if let Err(e) = start_turn(&state, &id, prompt.clone(), &tx) {
+                eprintln!("scheduler: {id}: {e}");
+            }
+            drop(rx);
+        }
+    });
+}
+
 fn restore_sessions_from_disk(state: &mut DaemonState) {
     let Ok(list) = session::list_sessions() else {
         return;
@@ -133,6 +173,7 @@ fn restore_sessions_from_disk(state: &mut DaemonState) {
                 gauntlet: false,
                 effort: None,
                 goal: String::new(),
+                jobs: Vec::new(),
             },
         );
     }
@@ -446,6 +487,32 @@ fn handle_msg(
             }
             start_turn(state, &session_id, text, out_tx)?;
         }
+        ClientMsg::Schedule {
+            session_id,
+            every_secs,
+            prompt,
+        } => {
+            let msg = {
+                let mut g = state.lock().unwrap();
+                match g.sessions.get_mut(&session_id) {
+                    Some(s) if every_secs == 0 => {
+                        let n = s.jobs.len();
+                        s.jobs.clear();
+                        format!("cleared {n} scheduled prompt(s)")
+                    }
+                    Some(s) if prompt.trim().is_empty() => crate::schedule::describe(&s.jobs),
+                    Some(s) => {
+                        s.jobs.push(crate::schedule::Job::new(
+                            std::time::Duration::from_secs(every_secs),
+                            prompt.clone(),
+                        ));
+                        format!("scheduled every {every_secs}s: {prompt}")
+                    }
+                    None => format!("unknown session {session_id}"),
+                }
+            };
+            out_tx.send(ServerMsg::Ok { message: msg })?;
+        }
         ClientMsg::Cancel { session_id } => {
             let g = state.lock().unwrap();
             if let Some(s) = g.sessions.get(&session_id) {
@@ -554,6 +621,7 @@ fn create_or_restore(
                     gauntlet: false,
                     effort: None,
                     goal: String::new(),
+                    jobs: Vec::new(),
                 },
             );
             drop(g);
@@ -664,6 +732,7 @@ fn create_or_restore(
             gauntlet: false,
             effort: None,
             goal: String::new(),
+            jobs: Vec::new(),
         },
     );
     drop(g);
@@ -711,6 +780,7 @@ fn attach_session(
                         gauntlet: false,
                         effort: None,
                         goal: String::new(),
+                        jobs: Vec::new(),
                     },
                 );
             }

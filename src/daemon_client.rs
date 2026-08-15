@@ -289,6 +289,25 @@ impl DaemonGuiClient {
         Ok(())
     }
 
+    /// `every_secs = 0` + prompt vazio cancela; prompt "?" lista.
+    pub fn schedule(&self, session_id: &str, every_secs: u64, prompt: &str) -> Result<String> {
+        self.send(&ClientMsg::Schedule {
+            session_id: session_id.into(),
+            every_secs,
+            prompt: if prompt == "?" { String::new() } else { prompt.into() },
+        })?;
+        match wait_reply_filter(
+            &self.incoming,
+            &self.stash,
+            |m| matches!(m, ServerMsg::Ok { .. } | ServerMsg::Error { .. }),
+            3000,
+        ) {
+            Some(ServerMsg::Ok { message }) => Ok(message),
+            Some(ServerMsg::Error { message }) => Err(anyhow::anyhow!(message)),
+            _ => Err(anyhow::anyhow!("daemon did not answer")),
+        }
+    }
+
     pub fn cancel(&self, session_id: &str) -> Result<()> {
         self.send(&ClientMsg::Cancel {
             session_id: session_id.into(),

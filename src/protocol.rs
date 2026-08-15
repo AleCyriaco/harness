@@ -74,6 +74,14 @@ pub enum ClientMsg {
     Cancel {
         session_id: String,
     },
+    /// Agenda um prompt recorrente no chat. `every_secs = 0` cancela todos.
+    Schedule {
+        session_id: String,
+        #[serde(default)]
+        every_secs: u64,
+        #[serde(default)]
+        prompt: String,
+    },
     Approval {
         session_id: String,
         allow: bool,

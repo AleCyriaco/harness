@@ -15,6 +15,8 @@ pub enum SlashAction {
     MemorySearch(String),
     MemoryStore(String),
     Diagnostics,
+    /// `/schedule 30m <prompt>` · `/schedule` lista · `/schedule off` cancela.
+    Schedule { every_secs: u64, prompt: String },
     SwarmList,
     ServerStart { path: String, port: Option<u16> },
     ServerStop,
@@ -63,6 +65,27 @@ pub fn parse(input: &str) -> SlashAction {
         "remember" if !rest.is_empty() => SlashAction::MemoryStore(rest.to_string()),
         "remember" => SlashAction::Help("Usage: /remember <text>".into()),
         "diag" | "diagnostics" => SlashAction::Diagnostics,
+        "schedule" | "agendar" => {
+            let (first, prompt) = rest.split_once(char::is_whitespace).unwrap_or((rest, ""));
+            match first.trim() {
+                "" => SlashAction::Schedule { every_secs: 0, prompt: "?".into() },
+                "off" | "clear" | "cancelar" => {
+                    SlashAction::Schedule { every_secs: 0, prompt: String::new() }
+                }
+                every => match crate::schedule::parse_every(every) {
+                    Some(d) if !prompt.trim().is_empty() => SlashAction::Schedule {
+                        every_secs: d.as_secs(),
+                        prompt: prompt.trim().to_string(),
+                    },
+                    Some(_) => SlashAction::Help(
+                        "Usage: /schedule <30s|30m|2h|1d> <prompt>".into(),
+                    ),
+                    None => SlashAction::Help(
+                        "Interval must be 30s–30d, e.g. /schedule 2h run the tests".into(),
+                    ),
+                },
+            }
+        }
         "swarm" => SlashAction::SwarmList,
         "serve" => {
             let mut sp = rest.split_whitespace();
@@ -158,6 +181,7 @@ pub fn help_text() -> String {
 /sessions — live multi-session list on daemon
 /mem <query> — search memories
 /remember <text> — store memory
+/schedule [30m <prompt>|off] — repeat a prompt in this chat (daemon keeps it)
 /diag — run diagnostics
 /swarm — list swarm agents
 /serve [path] [port] — start static server

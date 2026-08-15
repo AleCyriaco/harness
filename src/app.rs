@@ -2225,6 +2225,25 @@ impl HarnessApp {
                 }
                 self.refresh_memory_list();
             }
+            SlashAction::Schedule { every_secs, prompt } => {
+                let sid = if !self.session.meta.daemon_session_id.is_empty() {
+                    self.session.meta.daemon_session_id.clone()
+                } else {
+                    self.session.meta.id.clone()
+                };
+                match self
+                    .daemon
+                    .as_ref()
+                    .map(|c| c.schedule(&sid, every_secs, &prompt))
+                {
+                    Some(Ok(msg)) => self.messages.push(UiMessage {
+                        role: "system".into(),
+                        text: msg,
+                    }),
+                    Some(Err(e)) => self.push_error(format!("schedule: {e}")),
+                    None => self.push_error("daemon not connected".into()),
+                }
+            }
             SlashAction::Diagnostics => self.run_diagnostics(),
             SlashAction::SwarmList => {
                 self.refresh_swarm(true);

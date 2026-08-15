@@ -32,6 +32,7 @@ mod preview;
 mod protocol;
 mod provider_doctor;
 mod resume_import;
+mod schedule;
 mod selfdev;
 mod session;
 mod session_search;

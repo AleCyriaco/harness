@@ -378,6 +378,26 @@ impl Config {
     }
 }
 
+/// O que `harness reset` apaga. **Nunca** inclui o workspace: os arquivos
+/// gerados são do usuário, não estado do app.
+/// `keys = true` também joga fora o config.toml (chaves de API).
+pub fn reset_targets(keys: bool) -> Vec<PathBuf> {
+    let Some(dirs) = ProjectDirs::from("sh", "harness", "harness") else {
+        return Vec::new();
+    };
+    let data = dirs.data_dir();
+    let mut v = vec![
+        data.join("sessions"),
+        data.join("memory.sqlite3"),
+        data.join("memory_graph.sqlite3"),
+        data.join("graph"),
+    ];
+    if keys {
+        v.push(dirs.config_dir().join("config.toml"));
+    }
+    v
+}
+
 /// Suggested default: ~/Documents/Harness (visible, easy to find).
 pub fn suggested_workspace() -> PathBuf {
     if let Some(user) = UserDirs::new() {
@@ -426,6 +446,21 @@ pub fn ensure_workspace_layout(root: &Path) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn reset_nunca_mira_no_workspace_e_so_toca_as_chaves_se_pedir() {
+        let sem = reset_targets(false);
+        let com = reset_targets(true);
+        assert!(sem.iter().any(|p| p.ends_with("sessions")));
+        assert!(sem.iter().any(|p| p.ends_with("memory.sqlite3")));
+        assert!(!sem.iter().any(|p| p.ends_with("config.toml")), "chave só com --keys");
+        assert!(com.iter().any(|p| p.ends_with("config.toml")));
+        let ws = suggested_workspace();
+        assert!(
+            !com.iter().any(|p| *p == ws || ws.starts_with(p)),
+            "o workspace do usuário nunca entra"
+        );
+    }
+
     use super::*;
 
     #[test]
