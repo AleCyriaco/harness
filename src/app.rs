@@ -4342,6 +4342,8 @@ impl HarnessApp {
 
         let mut preview_path: Option<PathBuf> = None;
         let mut external: Option<PathBuf> = None;
+        // artifact publicável: serve e devolve a URL para a área de transferência
+        let mut publish: Option<PathBuf> = None;
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| {
@@ -4376,6 +4378,19 @@ impl HarnessApp {
                             {
                                 external = Some(path.clone());
                             }
+                            // só HTML vira link publicável
+                            let is_web = matches!(
+                                path.extension().and_then(|e| e.to_str()),
+                                Some("html") | Some("htm")
+                            );
+                            if is_web
+                                && ui
+                                    .add(egui::Button::new(crate::theme::meta("🔗 link")).frame(false))
+                                    .on_hover_text("Serve it and copy the local URL")
+                                    .clicked()
+                            {
+                                publish = Some(path.clone());
+                            }
                         });
                     });
                 }
@@ -4386,6 +4401,22 @@ impl HarnessApp {
         }
         if let Some(path) = external {
             open_path(&path);
+        }
+        if let Some(path) = publish {
+            match preview::serve_html(&path) {
+                Ok(url) => {
+                    ui.ctx().copy_text(url.clone());
+                    self.status = format!("link copied: {url}");
+                    self.messages.push(UiMessage {
+                        role: "system".into(),
+                        text: format!(
+                            "Served — link copied to clipboard:\n{url}\n\
+                             (this machine only, while harness runs — 127.0.0.1)"
+                        ),
+                    });
+                }
+                Err(e) => self.push_error(format!("publish: {e}")),
+            }
         }
     }
 
