@@ -23,6 +23,23 @@ pub const DEFAULT_DENY: &[&str] = &[
     "sudo ",
 ];
 
+/// Caminhos de segredo. `read_file` já é confinado ao workspace, mas o shell
+/// não é: sem isto um `cat` no config do harness entrega as API keys ao modelo
+/// — e elas viajam para o provedor no histórico.
+/// cyrix: `.env` fica de fora de propósito — projeto legítimo usa e o agente
+/// precisa editar; segredo de verdade mora nos caminhos abaixo.
+pub const SECRET_PATHS: &[&str] = &[
+    "sh.harness.harness/config.toml",
+    "/.ssh/",
+    "id_rsa",
+    "id_ed25519",
+    "/.aws/credentials",
+    "/.config/gcloud",
+    "/.netrc",
+    "/.docker/config.json",
+    "keychain",
+];
+
 /// Tools que escrevem em disco ou executam algo.
 pub fn is_mutating(tool: &str) -> bool {
     matches!(
@@ -82,6 +99,12 @@ pub fn blocked_reason(
             );
         }
     }
+    if let Some(hit) = SECRET_PATHS.iter().find(|p| flat.contains(**p)) {
+        return Some(format!(
+            "guard: blocked — `{hit}` holds credentials and must not be read into the \
+             conversation. Ask the user for what you need instead."
+        ));
+    }
     patterns
         .iter()
         .find(|p| flat.contains(p.as_str()))
@@ -125,6 +148,18 @@ mod tests {
         assert!(blocked_reason(true, true, "run_command", &cmd("ls"), &d).is_some());
         assert!(blocked_reason(true, true, "read_file", "{}", &d).is_none());
         assert!(blocked_reason(true, true, "graph_query", "{}", &d).is_none());
+    }
+
+    #[test]
+    fn segredo_nao_vaza_pelo_shell() {
+        let d: Vec<String> = Vec::new();
+        let sec = |c: &str| blocked_reason(true, false, "run_command", &cmd(c), &d).is_some();
+        assert!(sec("cat ~/Library/Application Support/sh.harness.harness/config.toml"));
+        assert!(sec("cat ~/.ssh/id_rsa"));
+        assert!(sec("grep key ~/.aws/credentials"));
+        // arquivo comum de projeto continua livre
+        assert!(!sec("cat src/config.rs"));
+        assert!(!sec("cat .env"));
     }
 
     #[test]
