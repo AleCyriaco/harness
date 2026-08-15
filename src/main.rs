@@ -18,6 +18,7 @@ mod graph;
 mod hooks;
 mod icon;
 mod instructions;
+mod live;
 mod llm;
 mod llm_pool;
 mod llm_responses;

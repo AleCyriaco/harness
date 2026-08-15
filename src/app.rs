@@ -118,6 +118,8 @@ enum Dest {
     Graph,
     Memory,
     Swarm,
+    /// Grafo do turno (você → harness → agente → tools → resultado). Opcional.
+    Live,
     Diag,
     /// Web + Server fundidos (pé do rail).
     WebServer,
@@ -132,6 +134,7 @@ impl Dest {
             Dest::Graph => (Glyph::Nodes, "GRAPH"),
             Dest::Memory => (Glyph::Circle, "MEM"),
             Dest::Swarm => (Glyph::Diamond, "SWARM"),
+            Dest::Live => (Glyph::Nodes, "LIVE"),
             Dest::Diag => (Glyph::Bar, "DIAG"),
             Dest::WebServer => (Glyph::Globe, "WEB"),
         }
@@ -407,6 +410,12 @@ pub struct HarnessApp {
     turn_round: (u32, u32),
     /// Quando o turno começou — só para saber se vale notificar no fim.
     turn_started: Option<std::time::Instant>,
+    /// Tools observadas no turno atual — alimentam a visão Live.
+    turn_tools: Vec<crate::live::ToolEvt>,
+    /// Posições arrastadas dos nós Live (id → ponto), por chat em memória.
+    live_pos: std::collections::HashMap<String, egui::Pos2>,
+    /// Nó selecionado na visão Live.
+    live_sel: Option<String>,
     metrics: crate::metrics::Metrics,
     graph_stats: crate::graph::GraphStats,
     graph_query: String,
@@ -529,6 +538,9 @@ impl HarnessApp {
             queued: Vec::new(),
             turn_round: (0, 0),
             turn_started: None,
+            turn_tools: Vec::new(),
+            live_pos: std::collections::HashMap::new(),
+            live_sel: None,
             metrics: crate::metrics::Metrics::default(),
             graph_stats: crate::graph::GraphStats::default(),
             graph_query: String::new(),
@@ -1973,6 +1985,8 @@ impl HarnessApp {
         }
         self.busy = true;
         self.turn_started = Some(std::time::Instant::now());
+        self.turn_tools.clear();
+        self.live_sel = None;
         self.turn_round = (0, 0);
         self.stream_buf.clear();
         self.pending_approval = None;
@@ -2615,6 +2629,12 @@ impl HarnessApp {
                     self.status = "streaming…".into();
                 }
                 AgentEvent::ToolStart { name, args } => {
+                    self.turn_tools.push(crate::live::ToolEvt {
+                        name: name.clone(),
+                        arg: args.clone(),
+                        result: String::new(),
+                        done: false,
+                    });
                     self.messages.push(UiMessage {
                         role: "tool".into(),
                         text: ToolCall::start(&name, &args).encode(),
@@ -2622,6 +2642,15 @@ impl HarnessApp {
                     self.status = format!("tool: {name}");
                 }
                 AgentEvent::ToolResult { name, result } => {
+                    if let Some(t) = self
+                        .turn_tools
+                        .iter_mut()
+                        .rev()
+                        .find(|t| t.name == name && !t.done)
+                    {
+                        t.result = result.clone();
+                        t.done = true;
+                    }
                     finish_tool(&mut self.messages, &name, &result);
                     if name == "get_diagnostics" {
                         self.diagnostics = diagnostics::load_snapshot();
@@ -3081,14 +3110,18 @@ impl HarnessApp {
                     {
                         self.show_usage = !self.show_usage;
                     }
-                    for d in [
+                    let mut dests = vec![
                         Dest::Chat,
                         Dest::Files,
                         Dest::Graph,
                         Dest::Memory,
                         Dest::Swarm,
-                        Dest::Diag,
-                    ] {
+                    ];
+                    if self.cfg.live_view {
+                        dests.push(Dest::Live);
+                    }
+                    dests.push(Dest::Diag);
+                    for d in dests {
                         let (glyph, label) = d.rail();
                         // ponto = tem trabalho pendente aqui
                         let dot = match d {
@@ -5039,6 +5072,236 @@ impl HarnessApp {
             });
     }
 
+    /// Cor de um estado do grafo Live — a mesma na legenda e nos círculos.
+    fn live_color(p: &crate::theme::Palette, st: crate::live::State) -> egui::Color32 {
+        use crate::live::State::*;
+        match st {
+            Running => p.accent,
+            Done => p.ok,
+            Error => p.error,
+            Pending | Idle => p.muted,
+        }
+    }
+
+    fn live_view(&mut self, ui: &mut egui::Ui) {
+        use crate::live::{Kind, State};
+        let p = pal();
+
+        // cabeçalho + legenda (cores iguais às dos nós)
+        ui.horizontal(|ui| {
+            ui.label(crate::theme::ui_medium("Live", 14.0).color(p.text));
+            ui.label(crate::theme::meta("· the turn as a graph — drag to arrange, click to inspect"));
+        });
+        ui.horizontal(|ui| {
+            for (st, name) in [
+                (State::Running, "running"),
+                (State::Done, "done"),
+                (State::Pending, "pending"),
+                (State::Error, "error"),
+            ] {
+                let c = Self::live_color(&p, st);
+                let (r, _) = ui.allocate_exact_size(egui::vec2(9.0, 9.0), egui::Sense::hover());
+                ui.painter().circle(r.center(), 4.5, c, egui::Stroke::new(1.5, c));
+                ui.label(egui::RichText::new(name).size(11.5).color(c));
+                ui.add_space(8.0);
+            }
+        });
+        ui.add_space(4.0);
+
+        // monta o grafo do estado atual
+        let ep = crate::llm_pool::resolve_endpoint(&self.cfg, None);
+        let (llm_name, llm_model) = ep
+            .map(|e| (e.name, e.model))
+            .unwrap_or_else(|| ("llm".into(), self.cfg.model.clone()));
+        let tasks: Vec<(String, String, String)> = self
+            .swarm_snap
+            .plans
+            .iter()
+            .flat_map(|(_, plan)| {
+                plan.tasks
+                    .iter()
+                    .map(|t| (t.id.clone(), t.title.clone(), t.status.clone()))
+            })
+            .collect();
+        let swarm: Vec<(String, String, String)> = self
+            .swarm_snap
+            .agents
+            .iter()
+            .map(|a| {
+                (
+                    a.name.clone(),
+                    format!("{:?}", a.state).to_lowercase(),
+                    a.task.clone(),
+                )
+            })
+            .collect();
+        let label = if !self.session.meta.goal.trim().is_empty() {
+            self.session.meta.goal.clone()
+        } else {
+            self.session.meta.chat_folder_name.clone()
+        };
+        let input = crate::live::Input {
+            chat_label: &label,
+            busy: self.busy,
+            llm_name: &llm_name,
+            llm_model: &llm_model,
+            checkpoint: self.cfg.checkpoint,
+            guard: self.cfg.guard,
+            compaction: self.cfg.compaction,
+            tools: &self.turn_tools,
+            tasks: &tasks,
+            swarm: &swarm,
+        };
+        let g = crate::live::build(&input);
+
+        // reserva o canvas (deixa espaço p/ o detalhe embaixo)
+        let avail = ui.available_size();
+        let canvas_h = (avail.y - 132.0).max(220.0);
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(avail.x, canvas_h), egui::Sense::hover());
+
+        // layout padrão: coluna → X, ordem na coluna → Y
+        let margin = 46.0;
+        let cols = 5.0f32;
+        let colw = (rect.width() - margin * 2.0) / (cols - 1.0).max(1.0);
+        let mut by_col: std::collections::HashMap<u8, Vec<usize>> = Default::default();
+        for (i, n) in g.nodes.iter().enumerate() {
+            by_col.entry(n.col).or_default().push(i);
+        }
+        let mut pos: std::collections::HashMap<String, egui::Pos2> = Default::default();
+        for (col, idxs) in &by_col {
+            let x = rect.left() + margin + colw * (*col as f32);
+            let n = idxs.len() as f32;
+            for (k, &i) in idxs.iter().enumerate() {
+                let y = rect.top() + 40.0
+                    + (rect.height() - 80.0) * ((k as f32 + 1.0) / (n + 1.0));
+                let id = g.nodes[i].id.clone();
+                let d = egui::pos2(x, y);
+                pos.insert(id.clone(), *self.live_pos.get(&id).unwrap_or(&d));
+            }
+        }
+
+        let painter = ui.painter_at(rect);
+        let t = ui.input(|i| i.time) as f32;
+
+        // arestas (antes dos nós, que cobrem as pontas)
+        for e in &g.edges {
+            let (Some(a), Some(b)) = (pos.get(&e.from), pos.get(&e.to)) else {
+                continue;
+            };
+            match e.kind {
+                crate::live::EdgeKind::Solid => {
+                    painter.line_segment([*a, *b], egui::Stroke::new(1.4, p.border_soft));
+                }
+                crate::live::EdgeKind::Dashed => {
+                    dashed_impl(&painter, *a, *b, egui::Stroke::new(1.1, p.muted));
+                }
+                crate::live::EdgeKind::Flow => {
+                    painter.line_segment([*a, *b], egui::Stroke::new(2.0, p.accent));
+                    // ponto correndo no sentido do fluxo
+                    let f = (t * 0.7).fract();
+                    let m = *a + (*b - *a) * f;
+                    painter.circle_filled(m, 2.6, p.accent);
+                }
+            }
+        }
+
+        // nós: interação (arrastar + clicar) e desenho
+        for (i, n) in g.nodes.iter().enumerate() {
+            let mut c = pos[&n.id];
+            let r = match n.kind {
+                Kind::Agent | Kind::Result => 24.0,
+                Kind::Harness => 21.0,
+                Kind::Task | Kind::Swarm => 19.0,
+                Kind::You | Kind::Llm => 17.0,
+                Kind::Tool => 9.0,
+                Kind::Infra => 8.0,
+            };
+            let hit = egui::Rect::from_center_size(c, egui::vec2(r * 2.0 + 6.0, r * 2.0 + 6.0));
+            let resp = ui.interact(
+                hit,
+                egui::Id::new(("livenode", i, &n.id)),
+                egui::Sense::click_and_drag(),
+            );
+            if resp.dragged() {
+                c += resp.drag_delta();
+                self.live_pos.insert(n.id.clone(), c);
+            }
+            if resp.clicked() {
+                self.live_sel = Some(n.id.clone());
+            }
+            let col = Self::live_color(&p, n.state);
+            let selected = self.live_sel.as_deref() == Some(n.id.as_str());
+            // anel de seleção
+            if selected {
+                painter.circle_stroke(c, r + 5.0, egui::Stroke::new(2.0, p.accent));
+            }
+            // pulso nos que estão rodando
+            if n.state == State::Running {
+                let pw = ((t * 3.0).sin() * 0.5 + 0.5) * 0.5;
+                painter.circle_stroke(c, r + 2.0, egui::Stroke::new(2.0, col.gamma_multiply(pw)));
+            }
+            let fill = if matches!(n.kind, Kind::Llm) {
+                egui::Color32::TRANSPARENT
+            } else {
+                col.gamma_multiply(0.16)
+            };
+            painter.circle(c, r, fill, egui::Stroke::new(if r >= 19.0 { 2.2 } else { 1.8 }, col));
+            // rótulo abaixo
+            painter.text(
+                egui::pos2(c.x, c.y + r + 9.0),
+                egui::Align2::CENTER_CENTER,
+                one_line(&n.label, if r < 12.0 { 14 } else { 20 }),
+                egui::FontId::monospace(if r < 12.0 { 9.5 } else { 11.0 }),
+                if selected { p.text } else { p.text_dim },
+            );
+            if resp.hovered() {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+            }
+        }
+
+        // detalhe do nó selecionado
+        ui.add_space(6.0);
+        egui::Frame::new()
+            .fill(p.card)
+            .stroke(egui::Stroke::new(1.0, p.border_soft))
+            .corner_radius(egui::CornerRadius::same(10))
+            .inner_margin(egui::Margin::symmetric(12, 10))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width() - 4.0);
+                let sel = self.live_sel.clone();
+                match sel.as_deref().and_then(|id| g.nodes.iter().find(|n| n.id == id)) {
+                    None => {
+                        ui.label(crate::theme::meta("click a circle to see what it's running"));
+                    }
+                    Some(n) => {
+                        let col = Self::live_color(&p, n.state);
+                        ui.horizontal(|ui| {
+                            ui.label(crate::theme::ui_medium(n.label.clone(), 13.0).color(p.text));
+                            ui.label(
+                                egui::RichText::new(format!("{:?}", n.state).to_lowercase())
+                                    .size(11.0)
+                                    .color(col),
+                            );
+                        });
+                        for (k, v) in &n.detail {
+                            ui.horizontal_wrapped(|ui| {
+                                ui.label(crate::theme::meta(format!("{k}  ")));
+                                ui.label(egui::RichText::new(v).size(12.0).color(p.text_dim));
+                            });
+                        }
+                        if !n.last.is_empty() {
+                            ui.add_space(2.0);
+                            ui.label(
+                                egui::RichText::new(format!("last: {}", n.last))
+                                    .size(11.5)
+                                    .color(p.muted),
+                            );
+                        }
+                    }
+                }
+            });
+    }
+
     fn swarm_view(&mut self, ui: &mut egui::Ui) {
         use crate::swarm::AgentState;
         let p = pal();
@@ -5806,7 +6069,7 @@ impl eframe::App for HarnessApp {
         self.refresh_swarm(false);
         self.meter.tick();
         let any_busy = self.busy || self.open_tabs.iter().any(|t| t.busy);
-        if matches!(self.dest, Dest::Swarm | Dest::WebServer) || any_busy {
+        if matches!(self.dest, Dest::Swarm | Dest::Live | Dest::WebServer) || any_busy {
             ctx.request_repaint_after(std::time::Duration::from_millis(400));
         }
         // o gráfico só "corre" se houver frame; enquanto o painel estiver
@@ -5844,6 +6107,7 @@ impl eframe::App for HarnessApp {
                 Dest::Graph => self.graph_view(ui),
                 Dest::Memory => self.memory_view_ui(ui),
                 Dest::Swarm => self.swarm_view(ui),
+                Dest::Live => self.live_view(ui),
                 Dest::Diag => self.diag_view(ui),
                 Dest::WebServer => self.webserver_view(ui),
             });
@@ -6654,6 +6918,9 @@ impl HarnessApp {
         ));
         ui.add_space(10.0);
 
+        ui.checkbox(&mut self.cfg.live_view, "Show the Live graph in the rail (turn topology)");
+        ui.add_space(10.0);
+
         ui.label(crate::theme::ui_medium("Project & notifications", 13.0));
         ui.checkbox(
             &mut self.cfg.project_instructions,
@@ -7273,6 +7540,25 @@ mod preview_pick {
     fn chat_sem_pagina_nao_inventa() {
         let a = vec![PathBuf::from("/c/main.rs"), PathBuf::from("/c/a.md")];
         assert!(html_artifacts(&a).is_empty());
+    }
+}
+
+/// Linha tracejada — egui não desenha dash nativo em line_segment.
+fn dashed_impl(painter: &egui::Painter, a: egui::Pos2, b: egui::Pos2, stroke: egui::Stroke) {
+    let d = b - a;
+    let len = d.length();
+    if len < 1.0 {
+        return;
+    }
+    let step = 7.0;
+    let n = (len / step) as i32;
+    let dir = d / len;
+    let mut i = 0;
+    while i < n {
+        let s = a + dir * (i as f32 * step);
+        let e = a + dir * ((i as f32 + 0.5) * step);
+        painter.line_segment([s, e], stroke);
+        i += 1;
     }
 }
 

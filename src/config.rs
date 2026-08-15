@@ -75,6 +75,9 @@ pub struct Config {
     /// N do detector acima.
     #[serde(default = "default_stuck_threshold")]
     pub stuck_threshold: u32,
+    /// Mostra o destino "Live" no rail (grafo do turno). Opcional.
+    #[serde(default = "default_true")]
+    pub live_view: bool,
     /// Checkpoint: copia o arquivo antes da primeira alteração de cada turno.
     #[serde(default = "default_true")]
     pub checkpoint: bool,
@@ -227,6 +230,7 @@ impl Default for Config {
             mode: AppMode::Code,
             theme: crate::theme::ThemeMode::default(),
             usage_pinned: false,
+            live_view: true,
             checkpoint: true,
             project_instructions: true,
             notify_after_secs: default_notify_after(),
