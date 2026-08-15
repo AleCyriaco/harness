@@ -126,10 +126,10 @@ pub fn build(input: &Input) -> Graph {
         id: "harness".into(),
         kind: Kind::Harness,
         state: if input.busy { State::Running } else { State::Idle },
-        label: "harness".into(),
+        label: "daemon".into(),
         col: 1,
         detail: vec![
-            ("role".into(), "runs the agent behind the GUI".into()),
+            ("process".into(), "harness serve — runs the agent behind the GUI".into()),
             ("silent work".into(), "checkpoint · guard · compaction".into()),
         ],
         last: "holds the session even if you close the window".into(),
@@ -374,6 +374,22 @@ mod tests {
         };
         assert_eq!(edge_of("tool_0"), "task_1");
         assert_eq!(edge_of("tool_2"), "task_2", "depois do plan_set cai na task 2");
+    }
+
+    #[test]
+    fn swarm_vira_circulos_ligados_ao_agente() {
+        let mut i = base(&[], &[]);
+        let sw = vec![
+            ("tests".to_string(), "running".to_string(), "write tests".to_string()),
+            ("docs".to_string(), "done".to_string(), "update README".to_string()),
+        ];
+        i.swarm = &sw;
+        let g = build(&i);
+        let n = g.nodes.iter().find(|n| n.id == "sw_tests").expect("worker vira nó");
+        assert_eq!(n.kind, Kind::Swarm);
+        assert_eq!(n.state, State::Running);
+        // e cada worker pendura no agente
+        assert!(g.edges.iter().any(|e| e.from == "agent" && e.to == "sw_docs"));
     }
 
     #[test]
