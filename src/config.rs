@@ -75,6 +75,15 @@ pub struct Config {
     /// N do detector acima.
     #[serde(default = "default_stuck_threshold")]
     pub stuck_threshold: u32,
+    /// Checkpoint: copia o arquivo antes da primeira alteração de cada turno.
+    #[serde(default = "default_true")]
+    pub checkpoint: bool,
+    /// Lê AGENTS.md/CLAUDE.md do projeto apontado para o system prompt.
+    #[serde(default = "default_true")]
+    pub project_instructions: bool,
+    /// Avisa quando um turno passa deste tempo. 0 = desligado.
+    #[serde(default = "default_notify_after")]
+    pub notify_after_secs: u64,
     /// Compaction: o trecho cortado do histórico vira resumo em vez de sumir.
     #[serde(default = "default_true")]
     pub compaction: bool,
@@ -161,6 +170,9 @@ fn default_web_port() -> u16 {
 fn default_max_sessions() -> usize {
     32
 }
+fn default_notify_after() -> u64 {
+    60
+}
 fn default_effort() -> String {
     "medium".into()
 }
@@ -215,6 +227,9 @@ impl Default for Config {
             mode: AppMode::Code,
             theme: crate::theme::ThemeMode::default(),
             usage_pinned: false,
+            checkpoint: true,
+            project_instructions: true,
+            notify_after_secs: default_notify_after(),
             compaction: true,
             spill: true,
             guard: true,

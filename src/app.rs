@@ -405,6 +405,8 @@ pub struct HarnessApp {
     queued: Vec<String>,
     /// Rodada de tools atual / teto do turno — progresso real, não previsão.
     turn_round: (u32, u32),
+    /// Quando o turno começou — só para saber se vale notificar no fim.
+    turn_started: Option<std::time::Instant>,
     metrics: crate::metrics::Metrics,
     graph_stats: crate::graph::GraphStats,
     graph_query: String,
@@ -526,6 +528,7 @@ impl HarnessApp {
             announced_page: None,
             queued: Vec::new(),
             turn_round: (0, 0),
+            turn_started: None,
             metrics: crate::metrics::Metrics::default(),
             graph_stats: crate::graph::GraphStats::default(),
             graph_query: String::new(),
@@ -1969,6 +1972,7 @@ impl HarnessApp {
             return;
         }
         self.busy = true;
+        self.turn_started = Some(std::time::Instant::now());
         self.turn_round = (0, 0);
         self.stream_buf.clear();
         self.pending_approval = None;
@@ -2242,6 +2246,37 @@ impl HarnessApp {
                     }),
                     Some(Err(e)) => self.push_error(format!("schedule: {e}")),
                     None => self.push_error("daemon not connected".into()),
+                }
+            }
+            SlashAction::Checkpoints => {
+                let root = self.project_root();
+                let text = crate::checkpoint::describe(&crate::checkpoint::list(&root));
+                self.messages.push(UiMessage {
+                    role: "system".into(),
+                    text,
+                });
+            }
+            SlashAction::Rollback(id) => {
+                let root = self.project_root();
+                let list = crate::checkpoint::list(&root);
+                let target = if id.trim().is_empty() {
+                    list.first().map(|c| c.id.clone())
+                } else {
+                    Some(id.trim().to_string())
+                };
+                match target {
+                    Some(id) => match crate::checkpoint::rollback(&root, &id) {
+                        Ok(n) => {
+                            self.messages.push(UiMessage {
+                                role: "system".into(),
+                                text: format!("rolled back {n} file(s) to checkpoint {id}"),
+                            });
+                            self.artifacts =
+                                scan_artifacts(&self.session.chat_path(), self.mode);
+                        }
+                        Err(e) => self.push_error(format!("rollback: {e}")),
+                    },
+                    None => self.push_error("no checkpoint to roll back to".into()),
                 }
             }
             SlashAction::Diagnostics => self.run_diagnostics(),
@@ -2669,6 +2704,17 @@ impl HarnessApp {
             }
             self.busy = false;
             self.turn_round = (0, 0);
+            // turno longo termina fora de vista: avisa o sistema
+            if let Some(t0) = self.turn_started.take() {
+                let secs = t0.elapsed().as_secs();
+                if crate::notify::should_notify(self.cfg.notify_after_secs, secs) {
+                    let head = last_reply.lines().find(|l| !l.trim().is_empty()).unwrap_or("");
+                    crate::notify::send(
+                        &format!("harness · {} · {secs}s", self.session.meta.chat_folder_name),
+                        if cancelled { "cancelled" } else { head },
+                    );
+                }
+            }
             self.status = if cancelled {
                 format!("cancelled · daemon · {}", self.session.meta.chat_folder_name)
             } else {
@@ -6564,6 +6610,35 @@ impl HarnessApp {
         ui.label(crate::theme::meta(
             "Taken from your first message; edit it here to re-aim the chat.",
         ));
+        ui.add_space(10.0);
+
+        ui.label(crate::theme::ui_medium("Checkpoints", 13.0));
+        ui.checkbox(
+            &mut self.cfg.checkpoint,
+            "Copy a file before the agent's first edit of each turn",
+        );
+        ui.label(crate::theme::meta(
+            "/checkpoints lists them · /rollback undoes the newest. Only touched \
+             files are copied, so it is cheap on big repos.",
+        ));
+        ui.add_space(10.0);
+
+        ui.label(crate::theme::ui_medium("Project & notifications", 13.0));
+        ui.checkbox(
+            &mut self.cfg.project_instructions,
+            "Read AGENTS.md / CLAUDE.md from the pointed project",
+        );
+        ui.horizontal(|ui| {
+            ui.label(crate::theme::meta("notify after"));
+            let mut n = self.cfg.notify_after_secs;
+            if ui
+                .add(egui::DragValue::new(&mut n).range(0..=3600).speed(5.0))
+                .changed()
+            {
+                self.cfg.notify_after_secs = n;
+            }
+            ui.label(crate::theme::meta("seconds · 0 = off"));
+        });
         ui.add_space(10.0);
 
         ui.label(crate::theme::ui_medium("Guard", 13.0));

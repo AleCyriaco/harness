@@ -41,6 +41,19 @@ pub enum ApprovalDecision {
     AllowAlwaysShell,
 }
 
+/// `{"path":"x"}` → `x`. Só o que interessa para o checkpoint.
+fn path_arg(args: &str) -> Option<String> {
+    let v: serde_json::Value = serde_json::from_str(args).ok()?;
+    for key in ["path", "file", "file_path"] {
+        if let Some(p) = v.get(key).and_then(|x| x.as_str()) {
+            if !p.trim().is_empty() {
+                return Some(p.to_string());
+            }
+        }
+    }
+    None
+}
+
 /// Texto integral do trecho compactado, uma linha JSON por mensagem.
 fn spill_to_disk(root: &std::path::Path, dropped: &[ChatMessage]) {
     use std::io::Write;
@@ -130,6 +143,11 @@ fn run_turn_inner(
     crate::gauntlet::apply_to_system(&mut sys_content, cfg.gauntlet);
     // O objetivo sobrevive à compactação: é o que o agente persegue quando o
     // histórico encolhe e a mensagem original já saiu da janela.
+    sys_content.push_str(&crate::instructions::block(
+        &cfg.workspace,
+        cfg.project_instructions,
+        8_000,
+    ));
     if cfg.goal_track && !cfg.goal.trim().is_empty() {
         sys_content.push_str("\n\nGoal of this chat: ");
         sys_content.push_str(cfg.goal.trim());
@@ -157,36 +175,29 @@ fn run_turn_inner(
         .and_then(|m| m.content.clone())
         .unwrap_or_default();
 
+    // Tudo que muda a cada turno (hook, recall, skills) fica FORA do system:
+    // prefixo estável = cache do provedor acerta. O volátil viaja colado na
+    // última mensagem do usuário, que já era volátil de qualquer jeito.
+    let mut volatile: Vec<String> = Vec::new();
+
     // pre_turn hook
     if let Some(out) = crate::hooks::run_hook(&cfg.workspace, "pre_turn", &user_q) {
-        if let Some(sys) = history.first_mut() {
-            if let Some(ref mut c) = sys.content {
-                c.push_str("\n\nHook pre_turn:\n");
-                c.push_str(&out);
-            }
-        }
+        volatile.push(format!("Hook pre_turn:\n{out}"));
     }
 
     // Auto-recall vector memories + skill hints
     if cfg.memory_auto_recall && !user_q.is_empty() {
         let recall = crate::memory::recall_for_prompt(&user_q, 5);
         if !recall.is_empty() {
-            if let Some(sys) = history.first_mut() {
-                if let Some(ref mut c) = sys.content {
-                    c.push_str("\n\n");
-                    c.push_str(&recall);
-                }
-            }
+            volatile.push(recall);
             let _ = tx.send(AgentEvent::Status("memory recall…".into()));
         }
         let skills = crate::skills::match_skills(&cfg.workspace, &user_q, 2);
         if !skills.is_empty() {
-            if let Some(sys) = history.first_mut() {
-                if let Some(ref mut c) = sys.content {
-                    c.push_str("\n\nMatched skills (use skill_load if needed):\n");
-                    c.push_str(&crate::skills::format_skills(&skills));
-                }
-            }
+            volatile.push(format!(
+                "Matched skills (use skill_load if needed):\n{}",
+                crate::skills::format_skills(&skills)
+            ));
         }
     }
 
@@ -196,20 +207,22 @@ fn run_turn_inner(
         .map(|g| g.file_events_tail(6).join("\n"))
         .unwrap_or_default();
     if !file_events.is_empty() {
-        if let Some(sys) = history.first_mut() {
-            if let Some(ref mut c) = sys.content {
-                c.push_str("\n\nRecent file events (swarm):\n");
-                c.push_str(&file_events);
-            }
-        }
+        volatile.push(format!("Recent file events (swarm):\n{file_events}"));
     }
     let notices = crate::file_watch::drain_notices_for("main");
     let notice_txt = crate::file_watch::format_notices(&notices);
     if !notice_txt.is_empty() {
-        if let Some(sys) = history.first_mut() {
-            if let Some(ref mut c) = sys.content {
-                c.push_str("\n\n");
-                c.push_str(&notice_txt);
+        volatile.push(notice_txt);
+    }
+    if !volatile.is_empty() {
+        if let Some(last_user) = history.iter_mut().rev().find(|m| m.role == "user") {
+            let block = volatile.join("\n\n");
+            match last_user.content.as_mut() {
+                Some(c) => {
+                    c.push_str("\n\n---\n");
+                    c.push_str(&block);
+                }
+                None => last_user.content = Some(block),
             }
         }
     }
@@ -231,6 +244,9 @@ fn run_turn_inner(
     let mut final_text = String::new();
     let mut shell_always = cfg.auto_approve_shell;
     let mut writes_always = false;
+
+    // Checkpoint deste turno: só nasce se alguma tool escrever de fato.
+    let ckpt_id = chrono::Local::now().format("%Y%m%d_%H%M%S").to_string();
 
     // (tool, args) já executados neste turno — combustível do detector de laço
     let mut tool_log: Vec<(String, String)> = Vec::new();
@@ -394,6 +410,16 @@ fn run_turn_inner(
                         }
                     }
 
+                    // snapshot antes de mexer: desfazer é do usuário, não do modelo
+                    if cfg.checkpoint && crate::guard::is_mutating(&name) {
+                        if let Some(rel) = path_arg(&args) {
+                            if let Err(e) =
+                                crate::checkpoint::snapshot_file(&cfg.workspace, &ckpt_id, &rel)
+                            {
+                                let _ = tx.send(AgentEvent::Status(format!("checkpoint: {e}")));
+                            }
+                        }
+                    }
                     let _ = tx.send(AgentEvent::ToolStart {
                         name: name.clone(),
                         args: short_args,
@@ -520,6 +546,50 @@ fn preview_args(args: &str, max: usize) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    /// A tese do prefix cache: o system prompt tem que ser **idêntico** entre
+    /// turnos do mesmo chat. Recall e hook mudam a cada turno e por isso saíram
+    /// dele — se alguém devolver qualquer coisa volátil para lá, isto quebra.
+    #[test]
+    fn system_prompt_nao_muda_entre_turnos() {
+        let mut cfg = Config::default();
+        cfg.workspace = std::env::temp_dir().join("harness_prefix_test");
+        std::fs::create_dir_all(&cfg.workspace).ok();
+        cfg.goal = "fazer o jogo".into();
+
+        let build = || {
+            let mut c = llm::system_prompt(
+                AppMode::Code,
+                &cfg.workspace.display().to_string(),
+            );
+            crate::tokenless::apply_to_system(&mut c, cfg.token_less);
+            crate::gauntlet::apply_to_system(&mut c, cfg.gauntlet);
+            c.push_str(&crate::instructions::block(
+                &cfg.workspace,
+                cfg.project_instructions,
+                8_000,
+            ));
+            if cfg.goal_track && !cfg.goal.trim().is_empty() {
+                c.push_str("\n\nGoal of this chat: ");
+                c.push_str(cfg.goal.trim());
+            }
+            c
+        };
+        assert_eq!(build(), build(), "prefixo instável = cache perdido");
+        assert!(!build().contains("Background from earlier sessions"));
+        assert!(!build().contains("Hook pre_turn"));
+    }
+
+    #[test]
+    fn path_arg_acha_o_arquivo_de_qualquer_tool_de_escrita() {
+        assert_eq!(
+            path_arg(r#"{"path":"web/index.html","content":"x"}"#),
+            Some("web/index.html".into())
+        );
+        assert_eq!(path_arg(r#"{"file_path":"a.rs"}"#), Some("a.rs".into()));
+        assert_eq!(path_arg(r#"{"command":"ls"}"#), None);
+        assert_eq!(path_arg("nao é json"), None);
+    }
     use super::*;
 
     fn cfg() -> Config {

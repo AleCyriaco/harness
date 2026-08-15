@@ -15,6 +15,10 @@ pub enum SlashAction {
     MemorySearch(String),
     MemoryStore(String),
     Diagnostics,
+    /// `/checkpoints` lista os snapshots do chat.
+    Checkpoints,
+    /// `/rollback [id]` — sem id, desfaz o turno mais recente.
+    Rollback(String),
     /// `/schedule 30m <prompt>` · `/schedule` lista · `/schedule off` cancela.
     Schedule { every_secs: u64, prompt: String },
     SwarmList,
@@ -65,6 +69,8 @@ pub fn parse(input: &str) -> SlashAction {
         "remember" if !rest.is_empty() => SlashAction::MemoryStore(rest.to_string()),
         "remember" => SlashAction::Help("Usage: /remember <text>".into()),
         "diag" | "diagnostics" => SlashAction::Diagnostics,
+        "checkpoints" | "checkpoint" => SlashAction::Checkpoints,
+        "rollback" | "undo" | "desfazer" => SlashAction::Rollback(rest.to_string()),
         "schedule" | "agendar" => {
             let (first, prompt) = rest.split_once(char::is_whitespace).unwrap_or((rest, ""));
             match first.trim() {
@@ -182,6 +188,8 @@ pub fn help_text() -> String {
 /mem <query> — search memories
 /remember <text> — store memory
 /schedule [30m <prompt>|off] — repeat a prompt in this chat (daemon keeps it)
+/checkpoints — snapshots taken before the agent edited files
+/rollback [id] — undo those edits (newest checkpoint when no id)
 /diag — run diagnostics
 /swarm — list swarm agents
 /serve [path] [port] — start static server
