@@ -33,6 +33,8 @@ struct LiveSession {
     gauntlet: bool,
     /// Esforço de raciocínio deste chat.
     effort: Option<String>,
+    /// Objetivo do chat.
+    goal: String,
 }
 
 struct DaemonState {
@@ -130,6 +132,7 @@ fn restore_sessions_from_disk(state: &mut DaemonState) {
                 token_less: None,
                 gauntlet: false,
                 effort: None,
+                goal: String::new(),
             },
         );
     }
@@ -419,8 +422,9 @@ fn handle_msg(
             token_less,
             gauntlet,
             effort,
+            goal,
         } => {
-            if token_less.is_some() || gauntlet.is_some() || effort.is_some() {
+            if token_less.is_some() || gauntlet.is_some() || effort.is_some() || goal.is_some() {
                 let mut g = state.lock().unwrap();
                 if let Some(s) = g.sessions.get_mut(&session_id) {
                     if let Some(level) = token_less
@@ -434,6 +438,9 @@ fn handle_msg(
                     }
                     if let Some(e) = effort {
                         s.effort = Some(e);
+                    }
+                    if let Some(g) = goal {
+                        s.goal = g;
                     }
                 }
             }
@@ -546,6 +553,7 @@ fn create_or_restore(
                     token_less: None,
                     gauntlet: false,
                     effort: None,
+                    goal: String::new(),
                 },
             );
             drop(g);
@@ -623,6 +631,7 @@ fn create_or_restore(
                 token_less: None,
                 gauntlet: false,
                 effort: None,
+                goal: String::new(),
                 pinned: false,
                 project_dir: None,
                 title_locked: false,
@@ -654,6 +663,7 @@ fn create_or_restore(
             token_less: None,
             gauntlet: false,
             effort: None,
+            goal: String::new(),
         },
     );
     drop(g);
@@ -700,6 +710,7 @@ fn attach_session(
                         token_less: None,
                         gauntlet: false,
                         effort: None,
+                        goal: String::new(),
                     },
                 );
             }
@@ -881,6 +892,7 @@ fn start_turn(
         if let Some(e) = &s.effort {
             cfg.reasoning_effort = e.clone();
         }
+        cfg.goal = s.goal.clone();
         let guard = s.session.meta.project_dir.is_some();
         (cfg, s.mode, s.history.clone(), guard)
     };

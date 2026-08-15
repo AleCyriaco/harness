@@ -41,6 +41,20 @@ pub enum ApprovalDecision {
     AllowAlwaysShell,
 }
 
+/// Texto integral do trecho compactado, uma linha JSON por mensagem.
+fn spill_to_disk(root: &std::path::Path, dropped: &[ChatMessage]) {
+    use std::io::Write;
+    let path = root.join(".harness_spill.jsonl");
+    let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) else {
+        return;
+    };
+    for m in dropped {
+        if let Ok(line) = serde_json::to_string(m) {
+            let _ = writeln!(f, "{line}");
+        }
+    }
+}
+
 const MAX_TOOL_ROUNDS_CODE: usize = 20;
 const MAX_TOOL_ROUNDS_OFFICE: usize = 10;
 
@@ -114,6 +128,12 @@ fn run_turn_inner(
     let mut sys_content = llm::system_prompt(mode, &cfg.workspace.display().to_string());
     crate::tokenless::apply_to_system(&mut sys_content, cfg.token_less);
     crate::gauntlet::apply_to_system(&mut sys_content, cfg.gauntlet);
+    // O objetivo sobrevive à compactação: é o que o agente persegue quando o
+    // histórico encolhe e a mensagem original já saiu da janela.
+    if cfg.goal_track && !cfg.goal.trim().is_empty() {
+        sys_content.push_str("\n\nGoal of this chat: ");
+        sys_content.push_str(cfg.goal.trim());
+    }
     crate::metrics::set_current_level(cfg.token_less);
     let sys = ChatMessage {
         role: "system".into(),
@@ -220,6 +240,32 @@ fn run_turn_inner(
             let _ = tx.send(AgentEvent::Cancelled);
             return Ok(());
         }
+        // Compaction: o que sairia da janela vira nota + vai para o disco.
+        if cfg.compaction && history.len() > cfg.history_cap {
+            let keep_from = history.len() - cfg.history_cap;
+            let dropped: Vec<ChatMessage> = history[..keep_from].to_vec();
+            let note = crate::compact::condense(&dropped, 1_200);
+            if cfg.spill {
+                spill_to_disk(&cfg.workspace, &dropped);
+            }
+            if !note.is_empty() {
+                let _ = tx.send(AgentEvent::Status(format!(
+                    "compacted {} messages",
+                    dropped.len()
+                )));
+                history.drain(..keep_from);
+                history.insert(
+                    0,
+                    ChatMessage {
+                        role: "system".into(),
+                        content: Some(note),
+                        tool_calls: None,
+                        tool_call_id: None,
+                        name: None,
+                    },
+                );
+            }
+        }
         history = llm::compact_history(&history, cfg.history_cap, cfg.tool_result_cap);
         let _ = tx.send(AgentEvent::Round {
             n: round as u32 + 1,
@@ -263,6 +309,29 @@ fn run_turn_inner(
                     let name = call.function.name.clone();
                     let args = call.function.arguments.clone();
                     let short_args = preview_args(&args, 180);
+
+                    // guard: regra recusa antes de a aprovação perguntar
+                    if let Some(reason) = crate::guard::blocked_reason(
+                        cfg.guard,
+                        cfg.guard_read_only,
+                        &name,
+                        &args,
+                        &cfg.guard_deny,
+                    ) {
+                        let _ = tx.send(AgentEvent::Status(format!("guard blocked {name}")));
+                        let _ = tx.send(AgentEvent::ToolResult {
+                            name: name.clone(),
+                            result: reason.clone(),
+                        });
+                        history.push(ChatMessage {
+                            role: "tool".into(),
+                            content: Some(reason),
+                            tool_calls: None,
+                            tool_call_id: Some(call.id),
+                            name: Some(name),
+                        });
+                        continue;
+                    }
 
                     // laço: barra antes de gastar aprovação e execução
                     if crate::stuck::is_looping(

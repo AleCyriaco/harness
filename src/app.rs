@@ -154,18 +154,21 @@ enum SettingsSection {
     Swarm,
     /// Extração de página, crawl e detector de laço.
     Web,
+    /// Compaction, spill, guard e objetivo do chat.
+    Context,
     Appearance,
     Updates,
 }
 
 impl SettingsSection {
-    const ALL: [SettingsSection; 8] = [
+    const ALL: [SettingsSection; 9] = [
         SettingsSection::Models,
         SettingsSection::Workspace,
         SettingsSection::Approvals,
         SettingsSection::Memory,
         SettingsSection::Swarm,
         SettingsSection::Web,
+        SettingsSection::Context,
         SettingsSection::Appearance,
         SettingsSection::Updates,
     ];
@@ -178,6 +181,7 @@ impl SettingsSection {
             SettingsSection::Memory => "Memory",
             SettingsSection::Swarm => "Swarm",
             SettingsSection::Web => "Web & loops",
+            SettingsSection::Context => "Context & guard",
             SettingsSection::Appearance => "Appearance",
             SettingsSection::Updates => "Updates",
         }
@@ -1936,6 +1940,7 @@ impl HarnessApp {
         let _ = crate::skills::ensure_default_skills(&self.session.chat_path());
         self.input.clear();
         self.session.touch_title_from_user(&text);
+        self.session.touch_goal(&text);
         self.messages.push(UiMessage {
             role: "user".into(),
             text: text.clone(),
@@ -1958,6 +1963,7 @@ impl HarnessApp {
             Some(token_less),
             Some(self.session.meta.gauntlet),
             Some(self.effort()),
+            Some(self.session.meta.goal.clone()),
         ) {
             self.push_error(format!("daemon send: {e}"));
             return;
@@ -6026,6 +6032,9 @@ impl HarnessApp {
                                                 }
                                                 SettingsSection::Swarm => self.settings_swarm(ui),
                                                 SettingsSection::Web => self.settings_web(ui),
+                                                SettingsSection::Context => {
+                                                    self.settings_context(ui)
+                                                }
                                                 SettingsSection::Appearance => {
                                                     self.settings_appearance(ui, ctx)
                                                 }
@@ -6485,6 +6494,88 @@ impl HarnessApp {
         ui.label(crate::theme::meta(
             "A looping turn also stops the Gauntlet Loop instead of burning what is left.",
         ));
+    }
+
+    fn settings_context(&mut self, ui: &mut egui::Ui) {
+        ui.label(crate::theme::ui_medium("Context", 13.0));
+        ui.checkbox(
+            &mut self.cfg.compaction,
+            "Summarize what leaves the window (instead of dropping it)",
+        );
+        ui.checkbox(
+            &mut self.cfg.spill,
+            "Keep the full text in .harness_spill.jsonl",
+        );
+        ui.horizontal(|ui| {
+            ui.label(crate::theme::meta("messages kept"));
+            let mut n = self.cfg.history_cap;
+            if ui.add(egui::DragValue::new(&mut n).range(6..=200)).changed() {
+                self.cfg.history_cap = n;
+            }
+            ui.label(crate::theme::meta("· tool result cap"));
+            let mut t = self.cfg.tool_result_cap;
+            if ui
+                .add(egui::DragValue::new(&mut t).range(1_000..=200_000).speed(500.0))
+                .changed()
+            {
+                self.cfg.tool_result_cap = t;
+            }
+        });
+        ui.label(crate::theme::meta(
+            "The summary is local and extractive — no extra LLM call, no cost.",
+        ));
+        ui.add_space(10.0);
+
+        ui.label(crate::theme::ui_medium("Goal", 13.0));
+        ui.checkbox(
+            &mut self.cfg.goal_track,
+            "Keep this chat's goal in the system prompt",
+        );
+        let goal = self.session.meta.goal.clone();
+        ui.horizontal(|ui| {
+            ui.label(crate::theme::meta("this chat"));
+            let mut g = goal.clone();
+            if ui
+                .add(egui::TextEdit::singleline(&mut g).desired_width(360.0))
+                .changed()
+            {
+                self.session.meta.goal = g;
+            }
+        });
+        ui.label(crate::theme::meta(
+            "Taken from your first message; edit it here to re-aim the chat.",
+        ));
+        ui.add_space(10.0);
+
+        ui.label(crate::theme::ui_medium("Guard", 13.0));
+        ui.checkbox(
+            &mut self.cfg.guard,
+            "Block destructive commands before approval is even asked",
+        );
+        ui.checkbox(
+            &mut self.cfg.guard_read_only,
+            "Read-only mode — no writes, no shell, no background jobs",
+        );
+        let mut deny = self.cfg.guard_deny.join("\n");
+        ui.label(crate::theme::meta(
+            "Blocked patterns, one per line. Empty = built-in list (rm -rf /, mkfs, \
+             dd if=, sudo, download | shell, …).",
+        ));
+        if ui
+            .add(
+                egui::TextEdit::multiline(&mut deny)
+                    .desired_rows(4)
+                    .desired_width(400.0),
+            )
+            .changed()
+        {
+            self.cfg.guard_deny = deny
+                .lines()
+                .map(str::trim)
+                .filter(|l| !l.is_empty())
+                .map(str::to_string)
+                .collect();
+        }
     }
 
     fn settings_appearance(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {

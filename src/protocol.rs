@@ -67,6 +67,9 @@ pub enum ClientMsg {
         /// Esforço de raciocínio deste chat. Ausente = mantém.
         #[serde(default)]
         effort: Option<String>,
+        /// Objetivo do chat, para o agente não perdê-lo na compactação.
+        #[serde(default)]
+        goal: Option<String>,
     },
     Cancel {
         session_id: String,

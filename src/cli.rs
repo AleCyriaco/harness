@@ -366,6 +366,7 @@ fn cli_attach_session(id_or_prefix: &str) -> Result<()> {
                 token_less: None,
                 gauntlet: None,
                 effort: None,
+                goal: None,
             },
         )?;
         loop {
@@ -498,6 +499,7 @@ fn cli_run(prompt: &str, tcp: bool) -> Result<()> {
             token_less: None,
             gauntlet: None,
             effort: None,
+            goal: None,
         },
     )?;
     loop {
@@ -625,6 +627,7 @@ fn cli_connect_repl() -> Result<()> {
                 token_less: None,
                 gauntlet: None,
                 effort: None,
+                goal: None,
             },
         )?;
         // drain until done

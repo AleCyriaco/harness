@@ -44,6 +44,9 @@ pub struct SessionMeta {
     /// Esforço de raciocínio deste chat ("low"/"medium"/"high").
     #[serde(default)]
     pub effort: Option<String>,
+    /// Objetivo deste chat — primeira mensagem, ou o que o usuário fixar.
+    #[serde(default)]
+    pub goal: String,
     /// Título posto à mão — o auto-título da primeira mensagem não o sobrescreve.
     #[serde(default)]
     pub title_locked: bool,
@@ -85,6 +88,7 @@ impl Session {
                 project_dir: None,
                 gauntlet: false,
                 effort: None,
+                goal: String::new(),
                 title_locked: false,
             },
             messages: Vec::new(),
@@ -128,6 +132,7 @@ impl Session {
                 project_dir: None,
                 gauntlet: false,
                 effort: None,
+                goal: String::new(),
                 title_locked: false,
             },
             messages: Vec::new(),
@@ -159,6 +164,14 @@ impl Session {
             self.meta.workspace = workspace_root.display().to_string();
         } else {
             let _ = config::ensure_workspace_layout(Path::new(&self.meta.chat_dir));
+        }
+    }
+
+    /// O objetivo nasce da primeira mensagem e não é reescrito depois: é o
+    /// que o agente deve continuar perseguindo quando o histórico encolhe.
+    pub fn touch_goal(&mut self, user_text: &str) {
+        if self.meta.goal.trim().is_empty() {
+            self.meta.goal = summarize_words(user_text, 24);
         }
     }
 
@@ -456,6 +469,7 @@ mod tests {
                 project_dir: None,
                 gauntlet: false,
                 effort: None,
+                goal: String::new(),
                 title_locked: false,
             },
             messages: Vec::new(),

@@ -75,6 +75,28 @@ pub struct Config {
     /// N do detector acima.
     #[serde(default = "default_stuck_threshold")]
     pub stuck_threshold: u32,
+    /// Compaction: o trecho cortado do histórico vira resumo em vez de sumir.
+    #[serde(default = "default_true")]
+    pub compaction: bool,
+    /// Spill: o texto integral do trecho cortado vai para
+    /// `{chat}/.harness_spill.jsonl`.
+    #[serde(default = "default_true")]
+    pub spill: bool,
+    /// Guard: regras que barram comando destrutivo antes da aprovação.
+    #[serde(default = "default_true")]
+    pub guard: bool,
+    /// Modo somente-leitura: nenhuma tool que escreve ou executa roda.
+    #[serde(default)]
+    pub guard_read_only: bool,
+    /// Substitui a lista padrão de padrões barrados. Vazia = usa a padrão.
+    #[serde(default)]
+    pub guard_deny: Vec<String>,
+    /// Objetivo do chat injetado no system prompt entre turnos.
+    #[serde(default = "default_true")]
+    pub goal_track: bool,
+    /// Objetivo deste turno (vem do chat, não do disco).
+    #[serde(default, skip)]
+    pub goal: String,
     /// Esforço de raciocínio pedido ao modelo: "low" | "medium" | "high".
     /// Padrão para chats novos; cada chat pode sobrescrever.
     #[serde(default = "default_effort")]
@@ -193,6 +215,13 @@ impl Default for Config {
             mode: AppMode::Code,
             theme: crate::theme::ThemeMode::default(),
             usage_pinned: false,
+            compaction: true,
+            spill: true,
+            guard: true,
+            guard_read_only: false,
+            guard_deny: Vec::new(),
+            goal_track: true,
+            goal: String::new(),
             reasoning_effort: default_effort(),
             web_markdown: true,
             web_crawl_max_pages: default_crawl_pages(),

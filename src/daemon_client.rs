@@ -272,6 +272,7 @@ impl DaemonGuiClient {
         token_less: Option<crate::tokenless::TokenLessLevel>,
         gauntlet: Option<bool>,
         effort: Option<String>,
+        goal: Option<String>,
     ) -> Result<()> {
         self.send(&ClientMsg::UserMessage {
             session_id: session_id.into(),
@@ -279,6 +280,7 @@ impl DaemonGuiClient {
             token_less: token_less.map(|c| c.tag().to_string()),
             gauntlet,
             effort,
+            goal,
         })?;
         // wait Ok turn started (optional)
         let _ = wait_reply_filter(&self.incoming, &self.stash, |m| {
