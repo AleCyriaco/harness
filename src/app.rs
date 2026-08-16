@@ -422,6 +422,9 @@ pub struct HarnessApp {
     live_sel: Option<String>,
     /// Filtro do painel FILES.
     files_filter: String,
+    /// Modelos listados por endpoint (nome do endpoint → ids). Preenchido sob
+    /// demanda: o provedor cobra nada por `/models`, mas é ida à rede.
+    models_cache: std::collections::HashMap<String, Vec<String>>,
     /// Posições e seleção dos grafos de GRAPH e MEM.
     gpos: std::collections::HashMap<String, egui::Pos2>,
     gsel: Option<String>,
@@ -555,6 +558,7 @@ impl HarnessApp {
             live_pos: std::collections::HashMap::new(),
             live_sel: None,
             files_filter: String::new(),
+            models_cache: Default::default(),
             gpos: Default::default(),
             gsel: None,
             mpos: Default::default(),
@@ -3890,14 +3894,105 @@ impl HarnessApp {
 
                                 ui.horizontal(|ui| {
                                     ui.set_min_height(30.0);
+                                    // provedor E modelo, sem sair da conversa
                                     let model = one_line(&self.cfg.model, 18);
-                                    if w::chip(ui, &format!("{model} ▾"))
-                                        .on_hover_text("Trocar LLM do pool (⌘K)")
-                                        .clicked()
-                                    {
-                                        self.cmdk = true;
-                                        self.cmdk_query = "llm ".into();
-                                        self.cmdk_sel = 0;
+                                    let active = crate::llm_pool::active_name(&self.cfg);
+                                    let mut switch_to: Option<String> = None;
+                                    let mut pick_model: Option<String> = None;
+                                    let mut load_models: Option<String> = None;
+                                    egui::menu::menu_custom_button(
+                                        ui,
+                                        egui::Button::new(
+                                            egui::RichText::new(format!("{model} ▾"))
+                                                .monospace()
+                                                .size(11.5)
+                                                .color(p.text_dim),
+                                        )
+                                        .fill(egui::Color32::TRANSPARENT)
+                                        .stroke(egui::Stroke::new(1.0, p.border_soft))
+                                        .corner_radius(egui::CornerRadius::same(7))
+                                        .min_size(egui::vec2(0.0, 24.0)),
+                                        |ui| {
+                                            ui.set_min_width(220.0);
+                                            ui.label(crate::theme::meta("provider"));
+                                            for ep in self.cfg.llm_pool.iter().filter(|e| e.enabled)
+                                            {
+                                                let on = ep.name == active;
+                                                if ui
+                                                    .selectable_label(
+                                                        on,
+                                                        format!("{}  ·  {}", ep.name, ep.model),
+                                                    )
+                                                    .clicked()
+                                                {
+                                                    switch_to = Some(ep.name.clone());
+                                                    ui.close_menu();
+                                                }
+                                            }
+                                            ui.separator();
+                                            ui.label(crate::theme::meta(format!("model · {active}")));
+                                            match self.models_cache.get(&active) {
+                                                Some(list) if !list.is_empty() => {
+                                                    egui::ScrollArea::vertical()
+                                                        .max_height(220.0)
+                                                        .show(ui, |ui| {
+                                                            for m in list {
+                                                                if ui
+                                                                    .selectable_label(
+                                                                        *m == self.cfg.model,
+                                                                        m,
+                                                                    )
+                                                                    .clicked()
+                                                                {
+                                                                    pick_model = Some(m.clone());
+                                                                    ui.close_menu();
+                                                                }
+                                                            }
+                                                        });
+                                                }
+                                                _ => {
+                                                    if ui.button("list models…").clicked() {
+                                                        load_models = Some(active.clone());
+                                                        ui.close_menu();
+                                                    }
+                                                }
+                                            }
+                                        },
+                                    );
+                                    if let Some(name) = switch_to {
+                                        if let Ok(msg) =
+                                            crate::llm_pool::set_active(&mut self.cfg, &name)
+                                        {
+                                            let _ = self.cfg.save();
+                                            self.status = msg;
+                                        }
+                                    }
+                                    if let Some(m) = pick_model {
+                                        self.cfg.model = m.clone();
+                                        crate::llm_pool::set_model_of_active(&mut self.cfg, &m);
+                                        let _ = self.cfg.save();
+                                        self.status = format!("model: {m}");
+                                    }
+                                    if let Some(name) = load_models {
+                                        if let Some(ep) =
+                                            self.cfg.llm_pool.iter().find(|e| e.name == name).cloned()
+                                        {
+                                            match crate::llm_pool::fetch_remote_models(
+                                                &ep.api_base,
+                                                &ep.api_key,
+                                            ) {
+                                                Ok(list) if !list.is_empty() => {
+                                                    self.status =
+                                                        format!("{name}: {} model(s)", list.len());
+                                                    self.models_cache.insert(name, list);
+                                                }
+                                                Ok(_) => self
+                                                    .push_error(format!("{name}: no models listed")),
+                                                Err(e) => {
+                                                    self.push_error(format!("models {name}: {e}"))
+                                                }
+                                            }
+                                        }
                                     }
                                     let eff = self.effort();
                                     // cyrix: rótulo curto — a fila de pills já
@@ -6791,19 +6886,21 @@ impl HarnessApp {
             .sum::<u32>()
             .max(1);
         let mut fetch_idx: Option<usize> = None;
+        let models = self.models_cache.clone();
         let mut use_name: Option<String> = None;
         let row_w = (ui.available_width() - 24.0).max(240.0);
         for (i, ep) in self.cfg.llm_pool.iter_mut().enumerate() {
             egui::Frame::new()
+                .fill(p.card)
                 .stroke(egui::Stroke::new(1.0, p.border_soft))
-                .corner_radius(egui::CornerRadius::same(9))
-                .inner_margin(egui::Margin::symmetric(11, 9))
+                .corner_radius(egui::CornerRadius::same(10))
+                .inner_margin(egui::Margin::symmetric(14, 12))
                 .show(ui, |ui| {
                     ui.set_width(row_w);
-                    ui.spacing_mut().item_spacing.y = 5.0;
+                    ui.spacing_mut().item_spacing.y = 8.0;
                     ui.horizontal(|ui| {
                         ui.checkbox(&mut ep.enabled, "");
-                        ui.label(crate::theme::mono_medium(ep.name.clone(), 12.0));
+                        ui.label(crate::theme::mono_medium(ep.name.clone(), 12.5).color(p.text));
                         if crate::llm_pool::wire_of(&ep.wire, &ep.api_base)
                             == crate::llm_pool::Wire::Responses
                         {
@@ -6821,10 +6918,13 @@ impl HarnessApp {
                         ui.with_layout(
                             egui::Layout::right_to_left(egui::Align::Center),
                             |ui| {
-                                if ui.small_button("Usar").clicked() {
+                                if w::chip(ui, "use").clicked() {
                                     use_name = Some(ep.name.clone());
                                 }
-                                if ui.small_button("Modelos…").clicked() {
+                                if w::chip(ui, "models")
+                                    .on_hover_text("List what this provider offers")
+                                    .clicked()
+                                {
                                     fetch_idx = Some(i);
                                 }
                                 ui.add(
@@ -6864,7 +6964,23 @@ impl HarnessApp {
                     });
                     ui.horizontal(|ui| {
                         ui.label(crate::theme::meta("model"));
-                        ui.add(egui::TextEdit::singleline(&mut ep.model).desired_width(130.0));
+                        match models.get(&ep.name) {
+                            Some(list) if !list.is_empty() => {
+                                egui::ComboBox::from_id_salt(("model", i))
+                                    .selected_text(one_line(&ep.model, 26))
+                                    .width(190.0)
+                                    .show_ui(ui, |ui| {
+                                        for m in list {
+                                            ui.selectable_value(&mut ep.model, m.clone(), m);
+                                        }
+                                    });
+                            }
+                            _ => {
+                                ui.add(
+                                    egui::TextEdit::singleline(&mut ep.model).desired_width(190.0),
+                                );
+                            }
+                        }
                         ui.label(crate::theme::meta("key"));
                         let key_resp = ui.add(
                             egui::TextEdit::singleline(&mut ep.api_key)
@@ -6944,20 +7060,11 @@ impl HarnessApp {
         if let Some(i) = fetch_idx {
             if let Some(ep) = self.cfg.llm_pool.get(i).cloned() {
                 match crate::llm_pool::fetch_remote_models(&ep.api_base, &ep.api_key) {
-                    Ok(models) if !models.is_empty() => {
-                        let preview: String =
-                            models.iter().take(40).cloned().collect::<Vec<_>>().join("\n");
-                        self.messages.push(UiMessage {
-                            role: "system".into(),
-                            text: format!(
-                                "Models for {} ({} total):\n{}",
-                                ep.name,
-                                models.len(),
-                                preview
-                            ),
-                        });
+                    Ok(list) if !list.is_empty() => {
+                        self.status = format!("{}: {} model(s)", ep.name, list.len());
+                        self.models_cache.insert(ep.name.clone(), list);
                     }
-                    Ok(_) => self.push_error(format!("no models returned for {}", ep.name)),
+                    Ok(_) => self.push_error(format!("{}: provider listed no models", ep.name)),
                     Err(e) => self.push_error(format!("models {}: {e}", ep.name)),
                 }
             }
@@ -7832,10 +7939,14 @@ fn render_preview(ui: &mut egui::Ui, p: &PreviewContent) -> Option<String> {
 
 fn labeled_edit(ui: &mut egui::Ui, label: &str, value: &mut String, password: bool) {
     ui.horizontal(|ui| {
-        ui.label(
-            egui::RichText::new(label)
-                .size(13.0)
-                .color(pal().muted),
+        // mesma métrica dos rótulos do resto do app (meta mono 11)
+        let (r, _) = ui.allocate_exact_size(egui::vec2(96.0, 20.0), egui::Sense::hover());
+        ui.painter().text(
+            egui::pos2(r.left(), r.center().y),
+            egui::Align2::LEFT_CENTER,
+            label,
+            egui::FontId::monospace(11.0),
+            pal().muted,
         );
         let mut te = egui::TextEdit::singleline(value).desired_width(340.0);
         if password {

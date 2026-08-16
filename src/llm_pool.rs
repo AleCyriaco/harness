@@ -461,6 +461,21 @@ pub fn weights_text(cfg: &Config, mode: crate::modes::AppMode) -> String {
 }
 
 /// GET /v1/models (OpenAI-compatible) for an endpoint.
+/// Nome do endpoint ativo (o que `resolve_endpoint` escolheria agora).
+pub fn active_name(cfg: &Config) -> String {
+    resolve_endpoint(cfg, None)
+        .map(|e| e.name)
+        .unwrap_or_else(|| cfg.active_llm.clone())
+}
+
+/// Fixa o modelo no endpoint ativo, para a escolha sobreviver à troca de chat.
+pub fn set_model_of_active(cfg: &mut Config, model: &str) {
+    let name = active_name(cfg);
+    if let Some(ep) = cfg.llm_pool.iter_mut().find(|e| e.name == name) {
+        ep.model = model.to_string();
+    }
+}
+
 pub fn fetch_remote_models(api_base: &str, api_key: &str) -> Result<Vec<String>> {
     let base = api_base.trim_end_matches('/');
     let url = if base.ends_with("/v1") {
