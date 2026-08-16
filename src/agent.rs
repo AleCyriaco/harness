@@ -266,6 +266,12 @@ fn run_turn_inner(
     // Checkpoint deste turno: só nasce se alguma tool escrever de fato.
     let ckpt_id = chrono::Local::now().format("%Y%m%d_%H%M%S").to_string();
 
+    // Texto da rodada anterior: o modelo pode repetir a mesma fala rodada após
+    // rodada, chamando tools diferentes a cada volta. Sem isto o turno não
+    // termina e nenhuma checagem de fim de turno chega a rodar.
+    let mut last_round_text = String::new();
+    let mut repeated_rounds = 0u32;
+
     // (tool, args) já executados neste turno — combustível do detector de laço
     let mut tool_log: Vec<(String, String)> = Vec::new();
     let mut stuck_hit = false;
@@ -325,6 +331,33 @@ fn run_turn_inner(
             let _ = tx.send(AgentEvent::Status(fo));
         }
         let msg = reply.message;
+
+        // Mesma fala de novo? Uma vez pode ser coincidência; duas seguidas é
+        // laço, e insistir só queima rodada e token.
+        if cfg.stuck_detect {
+            let cur = msg.content.clone().unwrap_or_default();
+            if crate::gauntlet::is_repeat(&last_round_text, &cur) {
+                repeated_rounds += 1;
+                if repeated_rounds >= 2 {
+                    stuck_hit = true;
+                    let _ = tx.send(AgentEvent::Status(
+                        "same answer repeated across rounds — stopping the turn".into(),
+                    ));
+                    final_text = format!(
+                        "{}\n\n[harness] I stopped this turn: the same answer came back \
+                         {repeated_rounds} rounds in a row while the goal did not move. \
+                         Say what is still missing, or narrow the next step.",
+                        cur.trim()
+                    );
+                    break;
+                }
+            } else {
+                repeated_rounds = 0;
+            }
+            if !cur.trim().is_empty() {
+                last_round_text = cur;
+            }
+        }
 
         if let Some(calls) = msg.tool_calls.clone() {
             if !calls.is_empty() {

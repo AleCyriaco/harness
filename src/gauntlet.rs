@@ -161,6 +161,20 @@ mod tests {
         assert_eq!(next_step(true, b, a, false, 1, 10), None);
     }
 
+    /// Caso real: o modelo repetiu a fala e só acrescentou uma frase no fim,
+    /// chamando tools diferentes a cada rodada. Tem que contar como repetição.
+    #[test]
+    fn continuacao_quase_igual_conta_como_repeticao() {
+        let a = "Orientar workspace e estado do loop. Loop: #8 #9 #10 em aberto. \
+                 Ler artefactos e skill. Ler resto do agente, runbooks, tickets, \
+                 screens e UI. Critica isolada. Ler o resto da UI e comparar copias.";
+        let b = "Orientar workspace e estado do loop. Loop: #8 #9 #10 em aberto. \
+                 Ler artefactos e skill. Ler resto do agente, runbooks, tickets, \
+                 screens e UI. Critica isolada. Ler o resto da UI e comparar copias. \
+                 Critica isolada: falhas reais em doc, agente e UI.";
+        assert!(is_repeat(a, b), "mesma fala com uma frase a mais ainda é laço");
+    }
+
     #[test]
     fn texto_curto_nao_conta_como_repeticao() {
         assert!(!is_repeat("ok", "ok"), "resposta curta não é evidência");
