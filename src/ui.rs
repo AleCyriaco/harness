@@ -218,6 +218,106 @@ pub fn pill_toggle(ui: &mut egui::Ui, text: &str, on: bool) -> Response {
     )
 }
 
+/// Nó de um grafo desenhável (Graph, Mem, Live usam o mesmo).
+pub struct GNode {
+    pub id: String,
+    pub label: String,
+    pub r: f32,
+    pub color: Color32,
+    pub dim: bool,
+}
+
+/// Desenha um grafo em círculo, arrastável e clicável.
+/// Devolve o id clicado, se houve clique.
+pub fn graph_canvas(
+    ui: &mut egui::Ui,
+    rect: egui::Rect,
+    nodes: &[GNode],
+    edges: &[(usize, usize)],
+    pos: &mut std::collections::HashMap<String, Pos2>,
+    selected: &Option<String>,
+) -> Option<String> {
+    let p = pal();
+    // layout padrão: anel, com os maiores primeiro (já vêm ordenados)
+    let c = rect.center();
+    let radius = (rect.width().min(rect.height()) * 0.40).max(60.0);
+    let n = nodes.len().max(1) as f32;
+    for (i, node) in nodes.iter().enumerate() {
+        let ang = (i as f32) * std::f32::consts::TAU / n - std::f32::consts::FRAC_PI_2;
+        // dois anéis quando há muitos, para não virar colar apertado
+        let rr = if nodes.len() > 18 && i % 2 == 1 { radius * 0.62 } else { radius };
+        let d = c + egui::vec2(ang.cos(), ang.sin()) * rr;
+        pos.entry(node.id.clone()).or_insert(d);
+    }
+    let painter = ui.painter_at(rect);
+    for (a, b) in edges {
+        let (Some(na), Some(nb)) = (nodes.get(*a), nodes.get(*b)) else {
+            continue;
+        };
+        let (Some(pa), Some(pb)) = (pos.get(&na.id), pos.get(&nb.id)) else {
+            continue;
+        };
+        let lit = selected.as_deref() == Some(na.id.as_str())
+            || selected.as_deref() == Some(nb.id.as_str());
+        painter.line_segment(
+            [*pa, *pb],
+            Stroke::new(if lit { 1.8 } else { 0.8 }, if lit { p.accent } else { p.border_soft }),
+        );
+    }
+    let mut clicked = None;
+    for (i, node) in nodes.iter().enumerate() {
+        let mut at = pos[&node.id];
+        let hit = egui::Rect::from_center_size(at, Vec2::splat(node.r * 2.0 + 8.0));
+        let resp = ui.interact(hit, egui::Id::new(("gnode", i, &node.id)), egui::Sense::click_and_drag());
+        if resp.dragged() {
+            at += resp.drag_delta();
+            pos.insert(node.id.clone(), at);
+        }
+        if resp.clicked() {
+            clicked = Some(node.id.clone());
+        }
+        let sel = selected.as_deref() == Some(node.id.as_str());
+        if sel {
+            painter.circle_stroke(at, node.r + 5.0, Stroke::new(2.0, p.accent));
+        }
+        let col = if node.dim { p.muted } else { node.color };
+        painter.circle(at, node.r, col.gamma_multiply(0.16), Stroke::new(1.8, col));
+        painter.text(
+            Pos2::new(at.x, at.y + node.r + 9.0),
+            Align2::CENTER_CENTER,
+            &node.label,
+            FontId::monospace(if node.r < 11.0 { 9.5 } else { 11.0 }),
+            if sel { p.text } else { p.text_dim },
+        );
+        if resp.hovered() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+        }
+    }
+    clicked
+}
+
+/// Estado vazio que ensina: o que este painel é, e o que fazer agora.
+/// Devolve `true` quando o usuário clica na ação.
+pub fn empty_state(ui: &mut egui::Ui, what: &str, why: &str, action: Option<&str>) -> bool {
+    let p = pal();
+    let mut clicked = false;
+    ui.add_space(28.0);
+    ui.vertical_centered(|ui| {
+        ui.label(crate::theme::ui_medium(what, 13.5).color(p.text_dim));
+        ui.add_space(4.0);
+        ui.label(
+            egui::RichText::new(why)
+                .size(12.0)
+                .color(p.muted),
+        );
+        if let Some(a) = action {
+            ui.add_space(10.0);
+            clicked = primary_button(ui, a, true).clicked();
+        }
+    });
+    clicked
+}
+
 /// Botão terracota principal (Enviar, Salvar).
 pub fn primary_button(ui: &mut egui::Ui, text: &str, enabled: bool) -> Response {
     let p = pal();

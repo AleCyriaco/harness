@@ -420,6 +420,13 @@ pub struct HarnessApp {
     live_pos: std::collections::HashMap<String, egui::Pos2>,
     /// Nó selecionado na visão Live.
     live_sel: Option<String>,
+    /// Filtro do painel FILES.
+    files_filter: String,
+    /// Posições e seleção dos grafos de GRAPH e MEM.
+    gpos: std::collections::HashMap<String, egui::Pos2>,
+    gsel: Option<String>,
+    mpos: std::collections::HashMap<String, egui::Pos2>,
+    msel: Option<String>,
     metrics: crate::metrics::Metrics,
     graph_stats: crate::graph::GraphStats,
     graph_query: String,
@@ -547,6 +554,11 @@ impl HarnessApp {
             turn_tools: Vec::new(),
             live_pos: std::collections::HashMap::new(),
             live_sel: None,
+            files_filter: String::new(),
+            gpos: Default::default(),
+            gsel: None,
+            mpos: Default::default(),
+            msel: None,
             metrics: crate::metrics::Metrics::default(),
             graph_stats: crate::graph::GraphStats::default(),
             graph_query: String::new(),
@@ -597,7 +609,7 @@ impl HarnessApp {
                             })
                             .collect();
                         self.llm_history.clear();
-                        self.artifacts = scan_artifacts(&self.session.chat_path(), self.mode);
+                        self.artifacts = scan_artifacts(&self.project_root(), self.mode);
                         let _ = session::save_session(&self.session);
                         self.session_list = session::list_sessions().unwrap_or_default();
                         self.status = format!(
@@ -1905,7 +1917,8 @@ impl HarnessApp {
     }
 
     fn run_diagnostics(&mut self) {
-        let root = self.cfg.workspace.clone();
+        // o projeto apontado é o que interessa; o workspace global raramente compila
+        let root = self.project_root();
         self.status = "diagnostics…".into();
         let snap = diagnostics::run_workspace_diagnostics(&root, None);
         diagnostics::store_snapshot(snap.clone());
@@ -2701,7 +2714,7 @@ impl HarnessApp {
                         || name == "apply_patch"
                     {
                         // refresh artifacts after edits
-                        self.artifacts = scan_artifacts(&self.session.chat_path(), self.mode);
+                        self.artifacts = scan_artifacts(&self.project_root(), self.mode);
                     }
                 }
                 AgentEvent::NeedApproval { name, args_preview } => {
@@ -2809,7 +2822,7 @@ impl HarnessApp {
             }
             self.pending_approval = None;
             self.stream_buf.clear();
-            self.artifacts = scan_artifacts(&self.session.chat_path(), self.mode);
+            self.artifacts = scan_artifacts(&self.project_root(), self.mode);
             // Gerou uma página nova? Deixa o painel pronto e o mostra uma vez.
             // `preview_path_quiet` sobe o servidor mas não abre janela — quem
             // decide ver o jogo é o usuário, no botão Run.
@@ -4433,20 +4446,28 @@ impl HarnessApp {
     fn files_view(&mut self, ui: &mut egui::Ui) {
         let p = pal();
         ui.horizontal(|ui| {
-            ui.label(crate::theme::ui_medium("Chat files", 14.0).color(p.text));
+            let pointed = self.session.meta.project_dir.is_some();
+            ui.label(
+                crate::theme::ui_medium(if pointed { "Project files" } else { "Chat files" }, 14.0)
+                    .color(p.text),
+            );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if w::chip(ui, "refresh").clicked() {
-                    self.artifacts = scan_artifacts(&self.session.chat_path(), self.mode);
+                    self.artifacts = scan_artifacts(&self.project_root(), self.mode);
                 }
                 if w::chip(ui, "open folder").clicked() {
                     self.open_chat_folder();
                 }
             });
         });
-        ui.label(crate::theme::meta(
-            self.session.chat_path().display().to_string(),
-        ));
-        ui.add_space(8.0);
+        ui.label(crate::theme::meta(self.project_root().display().to_string()));
+        ui.add_space(6.0);
+        ui.add(
+            egui::TextEdit::singleline(&mut self.files_filter)
+                .desired_width(240.0)
+                .hint_text("filter…"),
+        );
+        ui.add_space(6.0);
 
         let mut preview_path: Option<PathBuf> = None;
         let mut external: Option<PathBuf> = None;
@@ -4456,13 +4477,34 @@ impl HarnessApp {
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 if self.artifacts.is_empty() {
-                    ui.label(crate::theme::meta("nothing generated in this chat yet"));
+                    w::empty_state(
+                        ui,
+                        "Nothing here yet",
+                        "Files the agent creates or edits in this folder show up here — click one \
+                         to preview, or use the link button to serve an HTML page.",
+                        None,
+                    );
                 }
+                let root = self.project_root();
+                let filter = self.files_filter.to_lowercase();
                 for path in &self.artifacts {
-                    let name = path
-                        .file_name()
-                        .map(|s| s.to_string_lossy().to_string())
-                        .unwrap_or_else(|| path.display().to_string());
+                    let rel = path
+                        .strip_prefix(&root)
+                        .unwrap_or(path)
+                        .display()
+                        .to_string();
+                    if !filter.is_empty() && !rel.to_lowercase().contains(&filter) {
+                        continue;
+                    }
+                    let size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+                    let name = format!(
+                        "{rel}  {}",
+                        if size >= 1024 {
+                            format!("{} KB", size / 1024)
+                        } else {
+                            format!("{size} B")
+                        }
+                    );
                     ui.horizontal(|ui| {
                         if ui
                             .add(
@@ -4869,9 +4911,16 @@ impl HarnessApp {
         ui.label(micro("coverage"));
         ui.add_space(4.0);
         if !built {
-            ui.label(crate::theme::meta(
-                "not indexed — click index, or ask the agent: graph_build",
-            ));
+            if w::empty_state(
+                ui,
+                "This project is not indexed yet",
+                "The graph maps symbols, imports and references without an LLM — indexing costs \
+                 zero tokens. With it, the agent reads a subgraph instead of whole files.",
+                Some("Index this project"),
+            ) {
+                self.run_graph_build(false);
+            }
+            return;
         } else {
             egui::Frame::new()
                 .fill(p.card)
@@ -4896,6 +4945,51 @@ impl HarnessApp {
                         }
                     });
                 });
+            // --- o grafo, desenhado ---
+            let root = self.project_root();
+            if let Ok((files, edges)) = crate::graph::topology(&root, 26) {
+                if !files.is_empty() {
+                    let nodes: Vec<w::GNode> = files
+                        .iter()
+                        .map(|(path, syms)| {
+                            let name = path.rsplit('/').next().unwrap_or(path).to_string();
+                            w::GNode {
+                                id: path.clone(),
+                                label: one_line(&name, 18),
+                                r: 7.0 + (*syms as f32).sqrt().min(9.0),
+                                color: p.accent,
+                                dim: false,
+                            }
+                        })
+                        .collect();
+                    let (rect, _) = ui.allocate_exact_size(
+                        egui::vec2(ui.available_width(), 320.0),
+                        egui::Sense::hover(),
+                    );
+                    if let Some(id) =
+                        w::graph_canvas(ui, rect, &nodes, &edges, &mut self.gpos, &self.gsel)
+                    {
+                        self.gsel = Some(id);
+                    }
+                    if let Some(sel) = self.gsel.clone() {
+                        let syms = files
+                            .iter()
+                            .find(|(pth, _)| *pth == sel)
+                            .map(|(_, n)| *n)
+                            .unwrap_or(0);
+                        ui.label(
+                            egui::RichText::new(format!("{sel} · {syms} symbol(s)"))
+                                .monospace()
+                                .size(11.5)
+                                .color(p.text_dim),
+                        );
+                    } else {
+                        ui.label(crate::theme::meta(
+                            "size = symbols in the file · lines = references between files · drag to arrange",
+                        ));
+                    }
+                }
+            }
             ui.add_space(4.0);
             ui.horizontal(|ui| {
                 let stale = g.stale_files;
@@ -5132,6 +5226,75 @@ impl HarnessApp {
             }
         });
         ui.add_space(8.0);
+        ui.add_space(6.0);
+
+        // --- a memória como grafo: nós ligados pelo que se parece ---
+        let q = self.memory_query.trim().to_lowercase();
+        match memory::with_store(|s| s.topology(40)) {
+            Ok((mem_nodes, edges)) if !mem_nodes.is_empty() => {
+                let nodes: Vec<w::GNode> = mem_nodes
+                    .iter()
+                    .map(|h| {
+                        let first = h.text.lines().next().unwrap_or(&h.text);
+                        let hit = !q.is_empty() && h.text.to_lowercase().contains(&q);
+                        w::GNode {
+                            id: format!("m{}", h.id),
+                            label: one_line(first, 16),
+                            r: if hit { 11.0 } else { 8.0 },
+                            color: if hit {
+                                p.accent
+                            } else if h.tags.contains("auto") {
+                                p.ok
+                            } else {
+                                p.text_dim
+                            },
+                            dim: !q.is_empty() && !hit,
+                        }
+                    })
+                    .collect();
+                let (rect, _) = ui.allocate_exact_size(
+                    egui::vec2(ui.available_width(), 300.0),
+                    egui::Sense::hover(),
+                );
+                if let Some(id) =
+                    w::graph_canvas(ui, rect, &nodes, &edges, &mut self.mpos, &self.msel)
+                {
+                    self.msel = Some(id);
+                }
+                match self
+                    .msel
+                    .as_ref()
+                    .and_then(|s| s.strip_prefix('m'))
+                    .and_then(|s| s.parse::<i64>().ok())
+                    .and_then(|id| mem_nodes.iter().find(|h| h.id == id))
+                {
+                    Some(h) => {
+                        ui.label(
+                            egui::RichText::new(format!("[{}] {}", h.tags, h.text))
+                                .size(12.0)
+                                .color(p.text_dim),
+                        );
+                    }
+                    None => {
+                        ui.label(crate::theme::meta(
+                            "lines link memories that look alike · type in search to highlight · click to read",
+                        ));
+                    }
+                }
+            }
+            _ => {
+                w::empty_state(
+                    ui,
+                    "No memories yet",
+                    "Facts you store (or the agent stores) show up here as a graph, linked by \
+                     similarity. Try /remember, or store one above.",
+                    None,
+                );
+            }
+        }
+
+        ui.add_space(8.0);
+        ui.label(micro("as text"));
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| {
@@ -5428,6 +5591,17 @@ impl HarnessApp {
                 }
             });
         });
+        if self.swarm_snap.agents.is_empty() {
+            w::empty_state(
+                ui,
+                "No workers running",
+                "The swarm splits a task across parallel workers inside the daemon, with a shared \
+                 plan (propose → assign → claim → complete). Ask for it in a Code chat, e.g. \
+                 \"use the swarm to port these three modules\" — or watch the whole turn in LIVE.",
+                None,
+            );
+            return;
+        }
         ui.label(crate::theme::meta(if self.daemon.is_some() {
             "workers run in the daemon — this panel reads the state from there"
         } else {
@@ -5589,6 +5763,27 @@ impl HarnessApp {
                 }
             });
         });
+        ui.label(crate::theme::meta(format!(
+            "compiler and linter output for {}",
+            shorten_path(&self.project_root())
+        )));
+        if self.diagnostics.items.is_empty() {
+            let msg = if self.diagnostics.summary.is_empty() {
+                "Nothing collected yet"
+            } else {
+                "No problems found"
+            };
+            if w::empty_state(
+                ui,
+                msg,
+                "Runs cargo check / tsc / ruff on the pointed project and lists what fails, \
+                 so the agent can fix it without you pasting errors.",
+                Some("Run diagnostics"),
+            ) {
+                self.run_diagnostics();
+            }
+            return;
+        }
         ui.label(crate::theme::meta(&self.diagnostics.summary));
         ui.add_space(8.0);
         egui::ScrollArea::vertical()

@@ -132,6 +132,53 @@ impl MemoryStore {
         Ok(rows.flatten().collect())
     }
 
+    /// Memórias recentes + arestas de semelhança, para desenho.
+    /// Usa o mesmo embedding da busca, então o que se liga aqui é o que a
+    /// busca considera parecido.
+    pub fn topology(&self, max: usize) -> Result<(Vec<MemoryHit>, Vec<(usize, usize)>)> {
+        let max = max.clamp(1, 60);
+        let mut stmt = self.conn.prepare(
+            "SELECT id, text, tags, embedding, created_at FROM memories ORDER BY id DESC LIMIT ?1",
+        )?;
+        let rows: Vec<(MemoryHit, Vec<f32>)> = stmt
+            .query_map(params![max as i64], |row| {
+                let blob: Vec<u8> = row.get(3)?;
+                let emb: Vec<f32> = blob
+                    .chunks_exact(4)
+                    .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+                    .collect();
+                Ok((
+                    MemoryHit {
+                        id: row.get(0)?,
+                        text: row.get(1)?,
+                        tags: row.get(2)?,
+                        score: 0.0,
+                        created_at: row.get(4)?,
+                    },
+                    emb,
+                ))
+            })?
+            .filter_map(|x| x.ok())
+            .collect();
+
+        let mut edges = Vec::new();
+        for i in 0..rows.len() {
+            for j in (i + 1)..rows.len() {
+                let (a, b) = (&rows[i].1, &rows[j].1);
+                if a.len() != b.len() || a.is_empty() {
+                    continue;
+                }
+                let dot: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
+                let na: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
+                let nb: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
+                if na > 0.0 && nb > 0.0 && dot / (na * nb) >= 0.55 {
+                    edges.push((i, j));
+                }
+            }
+        }
+        Ok((rows.into_iter().map(|(h, _)| h).collect(), edges))
+    }
+
     pub fn delete(&self, id: i64) -> Result<bool> {
         let n = self
             .conn

@@ -803,6 +803,57 @@ fn cluster(conn: &Connection) -> Result<usize> {
     Ok(order.len())
 }
 
+/// Topologia para desenho: arquivos como nós, referências como arestas.
+/// Limita a `max` arquivos mais conectados — desenhar 3 mil nós não ajuda ninguém.
+pub fn topology(root: &Path, max: usize) -> Result<(Vec<(String, usize)>, Vec<(usize, usize)>)> {
+    let conn = open(root)?;
+    let mut stmt = conn.prepare(
+        "SELECT f.path, COUNT(s.id) AS n FROM files f
+         LEFT JOIN symbols s ON s.file_id = f.id
+         GROUP BY f.id ORDER BY n DESC LIMIT ?1",
+    )?;
+    let files: Vec<(String, usize)> = stmt
+        .query_map(params![max as i64], |r| {
+            let path: String = r.get(0)?;
+            let n: i64 = r.get(1)?;
+            Ok((path, n as usize))
+        })?
+        .filter_map(|x| x.ok())
+        .collect();
+    if files.is_empty() {
+        return Ok((Vec::new(), Vec::new()));
+    }
+    let names: Vec<(String, usize)> = files;
+    let index: std::collections::HashMap<&str, usize> = names
+        .iter()
+        .enumerate()
+        .map(|(i, (p, _))| (p.as_str(), i))
+        .collect();
+    // arestas: referência de um arquivo a um símbolo definido em outro
+    let mut edges: Vec<(usize, usize)> = Vec::new();
+    let mut stmt = conn.prepare(
+        "SELECT rf.path, df.path FROM refs r
+         JOIN files rf ON rf.id = r.file_id
+         JOIN symbols s ON s.name = r.name
+         JOIN files df ON df.id = s.file_id
+         WHERE rf.id != df.id LIMIT 4000",
+    )?;
+    let rows = stmt.query_map([], |r| {
+        Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+    })?;
+    for row in rows.flatten() {
+        if let (Some(&a), Some(&b)) = (index.get(row.0.as_str()), index.get(row.1.as_str())) {
+            if a != b && !edges.contains(&(a, b)) {
+                edges.push((a, b));
+            }
+        }
+        if edges.len() >= 300 {
+            break;
+        }
+    }
+    Ok((names, edges))
+}
+
 pub fn stats(root: &Path, with_stale: bool) -> Result<GraphStats> {
     let conn = open(root)?;
     let files: usize = conn.query_row("SELECT COUNT(*) FROM files", [], |r| r.get(0))?;
