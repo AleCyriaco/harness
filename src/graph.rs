@@ -27,6 +27,14 @@ const SKIP_DIRS: &[&str] = &[
     ".next", "vendor", "Pods", ".cargo",
 ];
 
+/// A papelada do próprio harness (`.harness_checkpoints`, `.harness_spill.jsonl`,
+/// `.harness/`) não é código do usuário. Uma pasta de chat pode virar projeto
+/// depois, e aí o agente encontrava cópias de cada arquivo que ele mesmo salvou
+/// — e ficava tentando reconciliá-las.
+pub fn is_harness_junk(name: &str) -> bool {
+    name.starts_with(".harness")
+}
+
 const MAX_FILE_BYTES: u64 = 1_500_000;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -580,7 +588,7 @@ fn walk(root: &Path, out: &mut Vec<PathBuf>, depth: usize) {
             continue;
         }
         if p.is_dir() {
-            if SKIP_DIRS.contains(&name.as_str()) {
+            if SKIP_DIRS.contains(&name.as_str()) || is_harness_junk(&name) {
                 continue;
             }
             walk(&p, out, depth + 1);
@@ -1041,6 +1049,19 @@ mod tests {
     }
 
     /// Roda de verdade sobre o src/ deste repo:
+    #[test]
+    fn papelada_do_harness_nao_e_projeto() {
+        // uma pasta de chat pode virar projeto depois; o que o harness gravou
+        // lá dentro não pode voltar como se fosse código do usuário
+        assert!(is_harness_junk(".harness"));
+        assert!(is_harness_junk(".harness_checkpoints"));
+        assert!(is_harness_junk(".harness_spill.jsonl"));
+        assert!(is_harness_junk(".harness_chat.txt"));
+        // e não pode pegar nome legítimo parecido
+        assert!(!is_harness_junk("harness"));
+        assert!(!is_harness_junk("src"));
+    }
+
     /// `cargo test -- --ignored graph_end_to_end --nocapture`
     #[test]
     #[ignore]

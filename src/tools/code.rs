@@ -511,6 +511,9 @@ pub fn run_command(root: &Path, command: &str) -> Result<String> {
 }
 
 fn skip_dir(name: &str) -> bool {
+    if crate::graph::is_harness_junk(name) {
+        return true;
+    }
     matches!(
         name,
         "target"

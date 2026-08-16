@@ -8166,10 +8166,12 @@ fn scan_artifacts(root: &std::path::Path, mode: AppMode) -> Vec<PathBuf> {
             let path = entry.path();
             if path.is_dir() {
                 if let Some(name) = path.file_name().and_then(|s| s.to_str()) {
-                    if matches!(
-                        name,
-                        "target" | ".git" | "node_modules" | ".venv" | "venv"
-                    ) {
+                    if crate::graph::is_harness_junk(name)
+                        || matches!(
+                            name,
+                            "target" | ".git" | "node_modules" | ".venv" | "venv"
+                        )
+                    {
                         continue;
                     }
                 }

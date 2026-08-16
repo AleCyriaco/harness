@@ -36,10 +36,12 @@ pub fn agentgrep(root: &Path, query: &str, path_contains: Option<&str>, max_hits
             let p = e.path();
             if p.is_dir() {
                 let name = p.file_name().and_then(|s| s.to_str()).unwrap_or("");
-                if matches!(
-                    name,
-                    "target" | ".git" | "node_modules" | "dist" | ".venv" | "venv"
-                ) {
+                if crate::graph::is_harness_junk(name)
+                    || matches!(
+                        name,
+                        "target" | ".git" | "node_modules" | "dist" | ".venv" | "venv"
+                    )
+                {
                     continue;
                 }
                 stack.push(p);
