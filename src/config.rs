@@ -222,7 +222,7 @@ impl Default for Config {
             (
                 "https://api.x.ai/v1".to_string(),
                 xai,
-                std::env::var("HARNESS_MODEL").unwrap_or_else(|_| "grok-4.5".into()),
+                std::env::var("HARNESS_MODEL").unwrap_or_else(|_| "grok-4.6".into()),
             )
         } else {
             (
@@ -330,7 +330,7 @@ impl Config {
                 cfg.api_base = "https://api.x.ai/v1".into();
                 if cfg.model.starts_with("gpt-") || cfg.model.is_empty() {
                     cfg.model =
-                        std::env::var("HARNESS_MODEL").unwrap_or_else(|_| "grok-4.5".into());
+                        std::env::var("HARNESS_MODEL").unwrap_or_else(|_| "grok-4.6".into());
                 }
             } else {
                 let openai = env_first(&["OPENAI_API_KEY"]);

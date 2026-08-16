@@ -201,7 +201,7 @@ fn seed_defaults(cfg: &mut Config) {
             "https://api.x.ai/v1",
             "XAI_API_KEY",
             "GROK_API_KEY",
-            "grok-4.5",
+            "grok-4.6",
             0u32,
             false,
             0.0,

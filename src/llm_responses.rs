@@ -29,7 +29,13 @@ const TOP_P: f32 = 0.9;
 /// em 32768, valor seguro para a maioria dos modelos reasoning. Teto baixo
 /// aqui truncava respostas longas de agente (código, diffs).
 fn max_output_tokens(model: &str) -> u32 {
+    // Teto por família. Errar para baixo trunca resposta longa; errar para cima
+    // faz o provedor recusar o pedido, então cada família tem o seu.
     if model.starts_with("muse-spark-1.2") {
+        131_072
+    } else if model.starts_with("grok-4.6") {
+        500_000
+    } else if model.starts_with("grok-4") {
         131_072
     } else {
         32_768
@@ -655,6 +661,14 @@ mod tests {
         assert!(acc.done);
         let err = into_reply(acc).unwrap_err().to_string();
         assert!(err.contains("server overloaded"), "{err}");
+    }
+
+    #[test]
+    fn teto_por_familia_de_modelo() {
+        assert_eq!(max_output_tokens("grok-4.6"), 500_000);
+        assert_eq!(max_output_tokens("grok-4.5"), 131_072);
+        assert_eq!(max_output_tokens("muse-spark-1.2-contributor"), 131_072);
+        assert_eq!(max_output_tokens("gpt-4.1-mini"), 32_768);
     }
 
     #[test]

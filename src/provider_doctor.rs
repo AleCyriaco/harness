@@ -24,7 +24,7 @@ pub fn builtin_profiles() -> Vec<ProviderProfile> {
             name: "grok".into(),
             api_base: "https://api.x.ai/v1".into(),
             api_key_env: "XAI_API_KEY".into(),
-            model: "grok-4.5".into(),
+            model: "grok-4.6".into(),
             kind: "openai-compatible".into(),
         },
         ProviderProfile {

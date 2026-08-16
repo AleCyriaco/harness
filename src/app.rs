@@ -6537,7 +6537,7 @@ impl eframe::App for HarnessApp {
 
 /// Presets de provedor do wizard de setup.
 const PROVIDERS: [(&str, &str, &str); 4] = [
-    ("Grok", "https://api.x.ai/v1", "grok-4.5"),
+    ("Grok", "https://api.x.ai/v1", "grok-4.6"),
     ("OpenAI", "https://api.openai.com/v1", "gpt-4.1-mini"),
     ("Meta", "https://api.meta.ai/v1", "muse-spark-1.2"),
     ("Other", "", ""),
@@ -6686,15 +6686,23 @@ impl HarnessApp {
         }
         let p = pal();
         let mut close = false;
+        // Settings acompanha a janela: 90% da tela, com piso e teto sensatos,
+        // e pode ser redimensionada. Estava travada em 720x604.
+        let screen = ctx.screen_rect().size();
+        let win_w = (screen.x * 0.9).clamp(560.0, 1280.0);
+        let win_h = (screen.y * 0.9).clamp(420.0, 1000.0);
         egui::Window::new("settings")
             .title_bar(false)
-            .resizable(false)
+            .resizable(true)
             .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-            .fixed_size(egui::vec2(720.0, 604.0))
+            .default_size(egui::vec2(win_w, win_h))
+            .min_width(560.0)
+            .min_height(420.0)
             .frame(crate::theme::card_frame().inner_margin(egui::Margin::ZERO))
             .show(ctx, |ui| {
-                let body_h = 470.0_f32;
-                ui.set_width(720.0);
+                // corpo = janela menos cabeçalho e rodapé
+                let body_h = (ui.available_height() - 96.0).max(300.0);
+                let win_w = ui.available_width();
 
                 // cabeçalho
                 egui::Frame::new()
@@ -6722,7 +6730,7 @@ impl HarnessApp {
 
                 // corpo: lista à esquerda, uma seção por vez
                 ui.allocate_ui_with_layout(
-                    egui::vec2(720.0, body_h),
+                    egui::vec2(win_w, body_h),
                     egui::Layout::left_to_right(egui::Align::Min),
                     |ui| {
                         ui.spacing_mut().item_spacing.x = 0.0;
@@ -6760,7 +6768,7 @@ impl HarnessApp {
                         egui::Frame::new()
                             .inner_margin(egui::Margin::same(14))
                             .show(ui, |ui| {
-                                ui.set_width(720.0 - 166.0 - 28.0);
+                                ui.set_width((win_w - 166.0 - 28.0).max(320.0));
                                 ui.set_min_height(body_h - 28.0);
                                 ui.spacing_mut().item_spacing.y = 7.0;
                                 egui::ScrollArea::vertical()
