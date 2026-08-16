@@ -148,6 +148,7 @@ fn run_turn_inner(
         cfg.project_instructions,
         8_000,
     ));
+    sys_content.push_str(&crate::profile::block(cfg.user_model));
     if cfg.goal_track && !cfg.goal.trim().is_empty() {
         sys_content.push_str("\n\nGoal of this chat: ");
         sys_content.push_str(cfg.goal.trim());

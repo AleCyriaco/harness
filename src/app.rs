@@ -2749,6 +2749,30 @@ impl HarnessApp {
             } else {
                 format!("idle · daemon · {}", self.session.meta.chat_folder_name)
             };
+            // Loop de aprendizado: turno de trabalho vira rascunho de skill.
+            if self.cfg.learning_loop
+                && !cancelled
+                && !turn_failed
+                && !self.session.meta.goal.trim().is_empty()
+                && crate::learn::is_worthy(&self.turn_tools, turn_failed, self.cfg.learn_min_steps)
+            {
+                let goal = self.session.meta.goal.clone();
+                let (name, md) = crate::learn::draft_skill(&goal, &self.turn_tools);
+                let root = self.project_root();
+                let exists = crate::skills::load_skill(&root, &name).is_some();
+                if !exists {
+                    match crate::skills::save_skill(&root, &name, &md) {
+                        Ok(_) => self.messages.push(UiMessage {
+                            role: "system".into(),
+                            text: format!(
+                                "learned a skill draft from this turn: `{name}` — keep it, \
+                                 edit it, or delete it (/skill or the skills folder)."
+                            ),
+                        }),
+                        Err(e) => self.push_error(format!("learn: {e}")),
+                    }
+                }
+            }
             self.pending_approval = None;
             self.stream_buf.clear();
             self.artifacts = scan_artifacts(&self.session.chat_path(), self.mode);
@@ -6965,6 +6989,49 @@ impl HarnessApp {
             }
             ui.label(crate::theme::meta("seconds · 0 = off"));
         });
+        ui.add_space(10.0);
+
+        ui.label(crate::theme::ui_medium("Learning", 13.0));
+        ui.checkbox(
+            &mut self.cfg.learning_loop,
+            "After a work turn, save a draft skill from what worked",
+        );
+        ui.horizontal(|ui| {
+            ui.label(crate::theme::meta("after"));
+            let mut n = self.cfg.learn_min_steps;
+            if ui.add(egui::DragValue::new(&mut n).range(1..=30)).changed() {
+                self.cfg.learn_min_steps = n;
+            }
+            ui.label(crate::theme::meta("write/run steps in one turn"));
+        });
+        ui.checkbox(
+            &mut self.cfg.user_model,
+            "Keep a user profile the agent updates and reads across sessions",
+        );
+        if self.cfg.user_model {
+            let prof = crate::profile::read();
+            let n = prof.lines().filter(|l| !l.trim().is_empty()).count();
+            ui.horizontal(|ui| {
+                ui.label(crate::theme::meta(format!("profile: {n} fact(s)")));
+                if ui.small_button("open").clicked() {
+                    if let Some(d) = directories::ProjectDirs::from("sh", "harness", "harness") {
+                        open_path(&d.data_dir().join("profile.md"));
+                    }
+                }
+                if n > 0 && ui.small_button("clear").clicked() {
+                    if let Some(d) = directories::ProjectDirs::from("sh", "harness", "harness") {
+                        let _ = std::fs::remove_file(d.data_dir().join("profile.md"));
+                    }
+                }
+            });
+            if n > 0 {
+                ui.label(
+                    egui::RichText::new(prof.chars().take(400).collect::<String>())
+                        .size(11.0)
+                        .color(pal().muted),
+                );
+            }
+        }
         ui.add_space(10.0);
 
         ui.label(crate::theme::ui_medium("Guard", 13.0));

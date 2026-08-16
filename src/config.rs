@@ -75,6 +75,15 @@ pub struct Config {
     /// N do detector acima.
     #[serde(default = "default_stuck_threshold")]
     pub stuck_threshold: u32,
+    /// Loop de aprendizado: no fim de um turno de trabalho, cria rascunho de skill.
+    #[serde(default = "default_true")]
+    pub learning_loop: bool,
+    /// Mínimo de tools de trabalho para um turno virar skill.
+    #[serde(default = "default_learn_min")]
+    pub learn_min_steps: u32,
+    /// Modelo do usuário: injeta o perfil no system prompt e deixa o agente atualizá-lo.
+    #[serde(default = "default_true")]
+    pub user_model: bool,
     /// Mostra o destino "Live" no rail (grafo do turno). Opcional.
     #[serde(default = "default_true")]
     pub live_view: bool,
@@ -173,6 +182,9 @@ fn default_web_port() -> u16 {
 fn default_max_sessions() -> usize {
     32
 }
+fn default_learn_min() -> u32 {
+    4
+}
 fn default_notify_after() -> u64 {
     60
 }
@@ -230,6 +242,9 @@ impl Default for Config {
             mode: AppMode::Code,
             theme: crate::theme::ThemeMode::default(),
             usage_pinned: false,
+            learning_loop: true,
+            learn_min_steps: default_learn_min(),
+            user_model: true,
             live_view: true,
             checkpoint: true,
             project_instructions: true,
@@ -339,6 +354,7 @@ impl Config {
         cfg.web_crawl_max_pages = cfg.web_crawl_max_pages.clamp(1, 200);
         cfg.web_crawl_max_depth = cfg.web_crawl_max_depth.clamp(0, 5);
         cfg.stuck_threshold = cfg.stuck_threshold.clamp(2, 20);
+        cfg.learn_min_steps = cfg.learn_min_steps.clamp(1, 30);
         if !matches!(cfg.reasoning_effort.as_str(), "low" | "medium" | "high") {
             cfg.reasoning_effort = default_effort();
         }

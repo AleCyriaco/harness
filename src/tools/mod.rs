@@ -652,6 +652,17 @@ fn code_tools() -> Vec<Value> {
             }),
         ),
         fn_tool(
+            "profile_note",
+            "Record a durable fact about the USER (preferences, expertise, recurring context,              how they want you to work) — not chat-specific details. It persists across all              sessions and is shown to you next time. Use sparingly, one clear fact per call.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "fact": {"type": "string", "description": "one durable fact about the user"}
+                },
+                "required": ["fact"]
+            }),
+        ),
+        fn_tool(
             "skill_versions",
             "List archived versions of a skill, and restore one when `restore` is given. \
              Restoring makes the old body the newest version; nothing is overwritten.",
@@ -1522,6 +1533,13 @@ pub fn dispatch(
                 "skill {name} saved as v{v}{}",
                 if v > 1 { " (previous archived)" } else { "" }
             ))
+        }
+        "profile_note" => {
+            let fact = require_str(&args, "fact")?;
+            match crate::profile::add(fact)? {
+                true => Ok(format!("noted about the user: {fact}")),
+                false => Ok("already knew that".into()),
+            }
         }
         "skill_versions" => {
             let name = require_str(&args, "name")?;

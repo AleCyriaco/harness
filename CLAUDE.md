@@ -49,6 +49,9 @@ with "missing field X".
 | `metrics.rs` | tokens, cache, cost, by origin |
 | `tokenless.rs` | Token Less Cost — output compression per chat |
 | `gauntlet.rs` | Gauntlet Loop — directive + done marker + continue rule |
+| `learn.rs` | learning loop — a work turn becomes a draft skill |
+| `profile.rs` | evolving user model injected into the system prompt |
+| `live.rs` | Live view — the turn as a graph (pure topology) |
 | `stuck.rs` | loop guard — same tool + same args N times is blocked |
 | `web_extract.rs` | HTML → markdown, link harvesting, robots.txt |
 
