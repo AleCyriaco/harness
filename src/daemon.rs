@@ -35,6 +35,11 @@ struct LiveSession {
     effort: Option<String>,
     /// Objetivo do chat.
     goal: String,
+    /// "Get it done" neste chat.
+    get_it_done: bool,
+    /// Aprovação em aberto (nome, args). Sem isto, um cliente que reconecta
+    /// nunca vê o pedido e o turno dorme para sempre em `wait_approval`.
+    pending_approval: Option<(String, String)>,
     /// Prompts recorrentes deste chat (vivem enquanto o daemon viver).
     jobs: Vec<crate::schedule::Job>,
 }
@@ -173,6 +178,8 @@ fn restore_sessions_from_disk(state: &mut DaemonState) {
                 gauntlet: false,
                 effort: None,
                 goal: String::new(),
+                get_it_done: false,
+                pending_approval: None,
                 jobs: Vec::new(),
             },
         );
@@ -306,6 +313,22 @@ fn serve_connection<R: BufRead, W: Write + Send + 'static>(
         }
     }
     Ok(())
+}
+
+/// Um turno pode estar dormindo em `wait_approval` desde antes de este cliente
+/// existir. Sem reenviar, ele nunca vê o pedido e o turno não acorda nunca.
+fn resend_pending_approval(
+    out_tx: &Sender<ServerMsg>,
+    session_id: &str,
+    pending: Option<(String, String)>,
+) {
+    if let Some((name, args)) = pending {
+        let _ = out_tx.send(ServerMsg::Event {
+            session_id: session_id.to_string(),
+            event: "need_approval".into(),
+            payload: json!({ "name": name, "args": args }),
+        });
+    }
 }
 
 fn broadcast_session(state: &Arc<Mutex<DaemonState>>, session_id: &str, msg: ServerMsg) {
@@ -464,8 +487,14 @@ fn handle_msg(
             gauntlet,
             effort,
             goal,
+            get_it_done,
         } => {
-            if token_less.is_some() || gauntlet.is_some() || effort.is_some() || goal.is_some() {
+            if token_less.is_some()
+                || gauntlet.is_some()
+                || effort.is_some()
+                || goal.is_some()
+                || get_it_done.is_some()
+            {
                 let mut g = state.lock().unwrap();
                 if let Some(s) = g.sessions.get_mut(&session_id) {
                     if let Some(level) = token_less
@@ -482,6 +511,9 @@ fn handle_msg(
                     }
                     if let Some(g) = goal {
                         s.goal = g;
+                    }
+                    if let Some(v) = get_it_done {
+                        s.get_it_done = v;
                     }
                 }
             }
@@ -529,8 +561,9 @@ fn handle_msg(
             allow,
             always_shell,
         } => {
-            let g = state.lock().unwrap();
-            if let Some(s) = g.sessions.get(&session_id) {
+            let mut g = state.lock().unwrap();
+            if let Some(s) = g.sessions.get_mut(&session_id) {
+                s.pending_approval = None;
                 if let Some(tx) = &s.approval_tx {
                     let d = if always_shell {
                         ApprovalDecision::AllowAlwaysShell
@@ -583,7 +616,9 @@ fn create_or_restore(
             let session_id = s.session.meta.id.clone();
             let chat_dir = s.session.meta.chat_dir.clone();
             let title = s.session.meta.title.clone();
+            let pending = s.pending_approval.clone();
             drop(g);
+            resend_pending_approval(out_tx, &session_id, pending);
             out_tx.send(ServerMsg::SessionCreated {
                 session_id,
                 chat_dir,
@@ -621,6 +656,8 @@ fn create_or_restore(
                     gauntlet: false,
                     effort: None,
                     goal: String::new(),
+                    get_it_done: false,
+                    pending_approval: None,
                     jobs: Vec::new(),
                 },
             );
@@ -651,7 +688,9 @@ fn create_or_restore(
                     let session_id = s.session.meta.id.clone();
                     let chat_dir = s.session.meta.chat_dir.clone();
                     let title = s.session.meta.title.clone();
+                    let pending = s.pending_approval.clone();
                     drop(g);
+                    resend_pending_approval(out_tx, &session_id, pending);
                     out_tx.send(ServerMsg::SessionCreated {
                         session_id,
                         chat_dir,
@@ -700,6 +739,7 @@ fn create_or_restore(
                 gauntlet: false,
                 effort: None,
                 goal: String::new(),
+                get_it_done: false,
                 pinned: false,
                 project_dir: None,
                 title_locked: false,
@@ -732,6 +772,8 @@ fn create_or_restore(
             gauntlet: false,
             effort: None,
             goal: String::new(),
+            get_it_done: false,
+            pending_approval: None,
             jobs: Vec::new(),
         },
     );
@@ -780,6 +822,8 @@ fn attach_session(
                         gauntlet: false,
                         effort: None,
                         goal: String::new(),
+                        get_it_done: false,
+                        pending_approval: None,
                         jobs: Vec::new(),
                     },
                 );
@@ -963,6 +1007,7 @@ fn start_turn(
             cfg.reasoning_effort = e.clone();
         }
         cfg.goal = s.goal.clone();
+        cfg.get_it_done = s.get_it_done;
         let guard = s.session.meta.project_dir.is_some();
         (cfg, s.mode, s.history.clone(), guard)
     };
@@ -991,6 +1036,19 @@ fn start_turn(
                 },
             );
             match &ev {
+                AgentEvent::NeedApproval { name, args_preview } => {
+                    let mut g = state_bg.lock().unwrap();
+                    if let Some(s) = g.sessions.get_mut(&sid) {
+                        s.pending_approval = Some((name.clone(), args_preview.clone()));
+                    }
+                }
+                AgentEvent::ToolStart { .. } => {
+                    // rodou: o pedido de aprovação daquele tool foi respondido
+                    let mut g = state_bg.lock().unwrap();
+                    if let Some(s) = g.sessions.get_mut(&sid) {
+                        s.pending_approval = None;
+                    }
+                }
                 AgentEvent::Done { reply, .. } => {
                     let mut g = state_bg.lock().unwrap();
                     if let Some(s) = g.sessions.get_mut(&sid) {
@@ -1005,6 +1063,7 @@ fn start_turn(
                         s.busy = false;
                         s.cancel = None;
                         s.approval_tx = None;
+                        s.pending_approval = None;
                         let _ = session::save_session(&s.session);
                     }
                     break;
@@ -1016,6 +1075,7 @@ fn start_turn(
                         s.busy = false;
                         s.cancel = None;
                         s.approval_tx = None;
+                        s.pending_approval = None;
                         let _ = session::save_session(&s.session);
                     }
                     break;

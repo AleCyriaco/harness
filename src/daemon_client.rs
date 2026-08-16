@@ -273,6 +273,7 @@ impl DaemonGuiClient {
         gauntlet: Option<bool>,
         effort: Option<String>,
         goal: Option<String>,
+        get_it_done: Option<bool>,
     ) -> Result<()> {
         self.send(&ClientMsg::UserMessage {
             session_id: session_id.into(),
@@ -281,6 +282,7 @@ impl DaemonGuiClient {
             gauntlet,
             effort,
             goal,
+            get_it_done,
         })?;
         // wait Ok turn started (optional)
         let _ = wait_reply_filter(&self.incoming, &self.stash, |m| {

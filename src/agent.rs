@@ -559,6 +559,12 @@ fn needs_approval(
     writes_always: bool,
     guard_writes: bool,
 ) -> bool {
+    // "Get it done": você já aprovou tudo ao ligar. O guard continua valendo —
+    // ele roda ANTES desta função, então comando destrutivo e leitura de
+    // credencial seguem barrados mesmo aqui.
+    if cfg.get_it_done {
+        return false;
+    }
     if llm::is_safe_tool(name) && cfg.auto_approve_safe {
         return false;
     }
@@ -634,6 +640,20 @@ mod tests {
             auto_approve_shell: false,
             ..Config::default()
         }
+    }
+
+    #[test]
+    fn get_it_done_aprova_tudo_menos_o_que_o_guard_barra() {
+        let mut c = cfg();
+        c.get_it_done = true;
+        // nada mais pergunta, nem escrita em projeto apontado
+        assert!(!needs_approval(&c, "write_file", false, false, true));
+        assert!(!needs_approval(&c, "run_command", false, false, true));
+        // mas o guard, que roda antes, continua recusando
+        assert!(crate::guard::blocked_reason(
+            true, false, "run_command", "{\"command\":\"rm -rf /\"}", &[]
+        )
+        .is_some());
     }
 
     #[test]

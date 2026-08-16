@@ -402,6 +402,10 @@ pub struct HarnessApp {
     swarm_snap: crate::swarm::SwarmSnapshot,
     /// Auto-continues já gastos no objetivo atual do Gauntlet Loop.
     gauntlet_iter: u32,
+    /// Resposta da iteração anterior — repetir é sinal de laço em falso.
+    gauntlet_prev: String,
+    /// O próximo envio é automático (não foi você que digitou).
+    auto_send: bool,
     /// Página já anunciada no painel — evita reabrir a cada turno.
     announced_page: Option<PathBuf>,
     /// Mensagens digitadas enquanto o agente trabalha; vão na ordem, no fim do turno.
@@ -534,6 +538,8 @@ impl HarnessApp {
             server_port: web_port.to_string(),
             swarm_snap: crate::swarm::SwarmSnapshot::default(),
             gauntlet_iter: 0,
+            gauntlet_prev: String::new(),
+            auto_send: false,
             announced_page: None,
             queued: Vec::new(),
             turn_round: (0, 0),
@@ -1450,10 +1456,13 @@ impl HarnessApp {
         use crate::gauntlet::{next_step, Stop, CONTINUE_MESSAGE};
         let on = self.session.meta.gauntlet;
         let max = self.cfg.gauntlet_max_iterations;
-        match next_step(on, reply, stuck, self.gauntlet_iter, max) {
+        let prev = std::mem::take(&mut self.gauntlet_prev);
+        self.gauntlet_prev = reply.to_string();
+        match next_step(on, reply, &prev, stuck, self.gauntlet_iter, max) {
             None if !on => {}
             None => {
                 self.gauntlet_iter += 1;
+                self.auto_send = true;
                 // o rascunho do usuário volta depois: o laço não pode comê-lo
                 let draft = std::mem::replace(&mut self.input, CONTINUE_MESSAGE.into());
                 self.send_user_message();
@@ -1471,6 +1480,17 @@ impl HarnessApp {
             Some(Stop::Stuck) => {
                 self.gauntlet_iter = 0;
                 self.status = "gauntlet loop: stopped — the turn was looping".into();
+            }
+            Some(Stop::Repeating) => {
+                self.gauntlet_iter = 0;
+                self.messages.push(UiMessage {
+                    role: "system".into(),
+                    text: "gauntlet loop stopped: the answer repeated the previous one — \
+                           the model was restarting instead of advancing. Say what is missing, \
+                           or turn the pill off."
+                        .into(),
+                });
+                self.status = "gauntlet loop: stopped — repeated answer".into();
             }
         }
     }
@@ -1956,10 +1976,22 @@ impl HarnessApp {
         self.input.clear();
         self.session.touch_title_from_user(&text);
         self.session.touch_goal(&text);
-        self.messages.push(UiMessage {
-            role: "user".into(),
-            text: text.clone(),
-        });
+        if self.auto_send {
+            // não foi você que digitou: mostra como evento, não como fala sua
+            self.messages.push(UiMessage {
+                role: "system".into(),
+                text: format!(
+                    "↻ auto-continue {}/{} — \"{text}\"",
+                    self.gauntlet_iter, self.cfg.gauntlet_max_iterations
+                ),
+            });
+            self.auto_send = false;
+        } else {
+            self.messages.push(UiMessage {
+                role: "user".into(),
+                text: text.clone(),
+            });
+        }
         self.llm_history.push(ChatMessage {
             role: "user".into(),
             content: Some(text.clone()),
@@ -1970,6 +2002,7 @@ impl HarnessApp {
 
         if text != crate::gauntlet::CONTINUE_MESSAGE {
             self.gauntlet_iter = 0;
+            self.gauntlet_prev.clear();
         }
         let token_less = self.session.meta.token_less.unwrap_or(self.cfg.token_less);
         if let Err(e) = client.user_message(
@@ -1979,6 +2012,7 @@ impl HarnessApp {
             Some(self.session.meta.gauntlet),
             Some(self.effort()),
             Some(self.session.meta.goal.clone()),
+            Some(self.session.meta.get_it_done),
         ) {
             self.push_error(format!("daemon send: {e}"));
             return;
@@ -3904,6 +3938,23 @@ impl HarnessApp {
                                     {
                                         self.set_gauntlet(!g_on);
                                     }
+                                    let gid = self.session.meta.get_it_done;
+                                    if w::pill_toggle(ui, "get it done", gid)
+                                        .on_hover_text(
+                                            "Runs to the end without stopping to ask. Approval is \
+                                             granted by default while this is on — the guard still \
+                                             blocks destructive commands and secret reads.",
+                                        )
+                                        .clicked()
+                                    {
+                                        self.session.meta.get_it_done = !gid;
+                                        self.persist();
+                                        self.status = if !gid {
+                                            "get it done: on — no approval prompts".into()
+                                        } else {
+                                            "get it done: off".into()
+                                        };
+                                    }
                                     if w::chip(ui, "+ file")
                                         .on_hover_text("Attach a file path to the message")
                                         .clicked()
@@ -5167,6 +5218,7 @@ impl HarnessApp {
         let input = crate::live::Input {
             chat_label: &label,
             busy: self.busy,
+            awaiting_approval: self.pending_approval.is_some(),
             llm_name: &llm_name,
             llm_model: &llm_model,
             checkpoint: self.cfg.checkpoint,

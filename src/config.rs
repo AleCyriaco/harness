@@ -125,6 +125,10 @@ pub struct Config {
     /// Padrão para chats novos; cada chat pode sobrescrever.
     #[serde(default = "default_effort")]
     pub reasoning_effort: String,
+    /// "Get it done" ligado neste turno: aprova tudo que o guard deixar passar.
+    /// Vive no chat, não no config.toml.
+    #[serde(default, skip)]
+    pub get_it_done: bool,
     /// Gauntlet Loop ligado neste turno. Vive no chat, não no config.toml —
     /// o daemon copia do `LiveSession` para o `cfg` do turno.
     #[serde(skip)]
@@ -268,6 +272,7 @@ impl Default for Config {
             web_respect_robots: true,
             stuck_detect: true,
             stuck_threshold: default_stuck_threshold(),
+            get_it_done: false,
             gauntlet: false,
             gauntlet_max_iterations: default_gauntlet_max(),
             token_less: crate::tokenless::TokenLessLevel::default(),

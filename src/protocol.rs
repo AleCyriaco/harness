@@ -70,6 +70,9 @@ pub enum ClientMsg {
         /// Objetivo do chat, para o agente não perdê-lo na compactação.
         #[serde(default)]
         goal: Option<String>,
+        /// "Get it done": aprova tudo que o guard permitir. Ausente = mantém.
+        #[serde(default)]
+        get_it_done: Option<bool>,
     },
     Cancel {
         session_id: String,

@@ -41,6 +41,9 @@ pub struct SessionMeta {
     /// Gauntlet Loop ligado neste chat.
     #[serde(default)]
     pub gauntlet: bool,
+    /// "Get it done" neste chat: sem parar para aprovar.
+    #[serde(default)]
+    pub get_it_done: bool,
     /// Esforço de raciocínio deste chat ("low"/"medium"/"high").
     #[serde(default)]
     pub effort: Option<String>,
@@ -87,6 +90,7 @@ impl Session {
                 pinned: false,
                 project_dir: None,
                 gauntlet: false,
+                get_it_done: false,
                 effort: None,
                 goal: String::new(),
                 title_locked: false,
@@ -131,6 +135,7 @@ impl Session {
                 pinned: false,
                 project_dir: None,
                 gauntlet: false,
+                get_it_done: false,
                 effort: None,
                 goal: String::new(),
                 title_locked: false,
@@ -468,6 +473,7 @@ mod tests {
                 pinned: false,
                 project_dir: None,
                 gauntlet: false,
+                get_it_done: false,
                 effort: None,
                 goal: String::new(),
                 title_locked: false,

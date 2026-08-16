@@ -73,6 +73,8 @@ pub struct ToolEvt {
 pub struct Input<'a> {
     pub chat_label: &'a str,
     pub busy: bool,
+    /// O turno parou para pedir aprovação — é espera, não trabalho.
+    pub awaiting_approval: bool,
     pub llm_name: &'a str,
     pub llm_model: &'a str,
     pub checkpoint: bool,
@@ -165,18 +167,37 @@ pub fn build(input: &Input) -> Graph {
     nodes.push(Node {
         id: "agent".into(),
         kind: Kind::Agent,
-        state: if input.busy { State::Running } else { State::Idle },
+        state: if input.awaiting_approval {
+            State::Pending
+        } else if input.busy {
+            State::Running
+        } else {
+            State::Idle
+        },
         label: "agent".into(),
         col: 2,
         detail: vec![
-            ("doing".into(), if input.busy { "working" } else { "idle" }.into()),
+            (
+                "doing".into(),
+                if input.awaiting_approval {
+                    "waiting for your approval".into()
+                } else if input.busy {
+                    "working".to_string()
+                } else {
+                    "idle".to_string()
+                },
+            ),
             ("calls".into(), input.tools.len().to_string()),
         ],
-        last: input
+        last: if input.awaiting_approval {
+            "go back to CHAT and answer the approval prompt".to_string()
+        } else {
+            input
             .tools
             .last()
             .map(|t| format!("{} {}", t.name, t.arg.chars().take(40).collect::<String>()))
-            .unwrap_or_else(|| "waiting for you".into()),
+            .unwrap_or_else(|| "waiting for you".into())
+        },
     });
     edges.push(solid("harness", "agent"));
     nodes.push(Node {
@@ -308,6 +329,7 @@ mod tests {
         Input {
             chat_label: "mole GUI",
             busy: true,
+            awaiting_approval: false,
             llm_name: "grok",
             llm_model: "grok-4.5",
             checkpoint: true,
@@ -332,6 +354,16 @@ mod tests {
             .edges
             .iter()
             .any(|e| e.to == "llm" && e.kind == EdgeKind::Flow));
+    }
+
+    #[test]
+    fn esperando_aprovacao_nao_e_trabalhando() {
+        let mut i = base(&[], &[]);
+        i.awaiting_approval = true;
+        let g = build(&i);
+        let a = g.nodes.iter().find(|n| n.id == "agent").unwrap();
+        assert_eq!(a.state, State::Pending, "espera não é running");
+        assert!(a.detail.iter().any(|(_, v)| v.contains("approval")));
     }
 
     #[test]
