@@ -263,13 +263,11 @@ impl DaemonGuiClient {
         }
     }
 
-    /// `token_less` e `gauntlet` sobrescrevem o estado da sessão no daemon
-    /// (ambos são por chat/aba).
+    /// Estado por chat que o daemon precisa saber a cada mensagem.
     pub fn user_message(
         &self,
         session_id: &str,
         text: &str,
-        token_less: Option<crate::tokenless::TokenLessLevel>,
         gauntlet: Option<bool>,
         effort: Option<String>,
         goal: Option<String>,
@@ -278,7 +276,6 @@ impl DaemonGuiClient {
         self.send(&ClientMsg::UserMessage {
             session_id: session_id.into(),
             text: text.into(),
-            token_less: token_less.map(|c| c.tag().to_string()),
             gauntlet,
             effort,
             goal,

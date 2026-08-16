@@ -139,7 +139,12 @@ fn run_turn_inner(
     )));
 
     let mut sys_content = llm::system_prompt(mode, &cfg.workspace.display().to_string());
-    crate::tokenless::apply_to_system(&mut sys_content, cfg.token_less);
+    // O nível vem do provedor (compressão é economia de quem cobra), com o
+    // padrão do config como piso.
+    let level = crate::llm_pool::resolve_endpoint(&cfg, None)
+        .and_then(|e| e.token_less)
+        .unwrap_or(cfg.token_less);
+    crate::tokenless::apply_to_system(&mut sys_content, level);
     crate::gauntlet::apply_to_system(&mut sys_content, cfg.gauntlet);
     // O objetivo sobrevive à compactação: é o que o agente persegue quando o
     // histórico encolhe e a mensagem original já saiu da janela.
@@ -153,7 +158,7 @@ fn run_turn_inner(
         sys_content.push_str("\n\nGoal of this chat: ");
         sys_content.push_str(cfg.goal.trim());
     }
-    crate::metrics::set_current_level(cfg.token_less);
+    crate::metrics::set_current_level(level);
     let sys = ChatMessage {
         role: "system".into(),
         content: Some(sys_content),

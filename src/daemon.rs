@@ -27,8 +27,6 @@ struct LiveSession {
     cancel: Option<Arc<AtomicBool>>,
     approval_tx: Option<Sender<ApprovalDecision>>,
     subscribers: Vec<u64>,
-    /// Override de token_less vindo do cliente (por sessão/aba).
-    token_less: Option<crate::tokenless::TokenLessLevel>,
     /// Gauntlet Loop ligado neste chat (o cliente manda a cada mensagem).
     gauntlet: bool,
     /// Esforço de raciocínio deste chat.
@@ -174,7 +172,6 @@ fn restore_sessions_from_disk(state: &mut DaemonState) {
                 cancel: None,
                 approval_tx: None,
                 subscribers: Vec::new(),
-                token_less: None,
                 gauntlet: false,
                 effort: None,
                 goal: String::new(),
@@ -483,26 +480,18 @@ fn handle_msg(
         ClientMsg::UserMessage {
             session_id,
             text,
-            token_less,
             gauntlet,
             effort,
             goal,
             get_it_done,
         } => {
-            if token_less.is_some()
-                || gauntlet.is_some()
+            if gauntlet.is_some()
                 || effort.is_some()
                 || goal.is_some()
                 || get_it_done.is_some()
             {
                 let mut g = state.lock().unwrap();
                 if let Some(s) = g.sessions.get_mut(&session_id) {
-                    if let Some(level) = token_less
-                        .as_deref()
-                        .and_then(crate::tokenless::TokenLessLevel::parse)
-                    {
-                        s.token_less = Some(level);
-                    }
                     if let Some(on) = gauntlet {
                         s.gauntlet = on;
                     }
@@ -652,7 +641,6 @@ fn create_or_restore(
                     cancel: None,
                     approval_tx: None,
                     subscribers: vec![client_id],
-                    token_less: None,
                     gauntlet: false,
                     effort: None,
                     goal: String::new(),
@@ -735,7 +723,6 @@ fn create_or_restore(
                 chat_dir: dir,
                 chat_folder_name: folder,
                 daemon_session_id: id,
-                token_less: None,
                 gauntlet: false,
                 effort: None,
                 goal: String::new(),
@@ -768,7 +755,6 @@ fn create_or_restore(
             cancel: None,
             approval_tx: None,
             subscribers: vec![client_id],
-            token_less: None,
             gauntlet: false,
             effort: None,
             goal: String::new(),
@@ -818,7 +804,6 @@ fn attach_session(
                         cancel: None,
                         approval_tx: None,
                         subscribers: Vec::new(),
-                        token_less: None,
                         gauntlet: false,
                         effort: None,
                         goal: String::new(),
@@ -997,11 +982,6 @@ fn start_turn(
             s.session.meta.project_dir.as_deref(),
             &s.session.meta.chat_dir,
         );
-        // Override por sessão vence o padrão global; os workers do swarm
-        // herdam pelo mesmo `cfg`.
-        if let Some(level) = s.token_less {
-            cfg.token_less = level;
-        }
         cfg.gauntlet = s.gauntlet;
         if let Some(e) = &s.effort {
             cfg.reasoning_effort = e.clone();

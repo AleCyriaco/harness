@@ -1456,12 +1456,19 @@ impl HarnessApp {
     }
 
     /// Override do chat vence o padrão global.
+    /// Nível efetivo: o do provedor ativo, ou o padrão do config.
     fn token_less_level(&self) -> TokenLessLevel {
-        self.session.meta.token_less.unwrap_or(self.cfg.token_less)
+        crate::llm_pool::resolve_endpoint(&self.cfg, None)
+            .and_then(|e| e.token_less)
+            .unwrap_or(self.cfg.token_less)
     }
 
     fn set_token_less(&mut self, level: TokenLessLevel) {
-        self.session.meta.token_less = Some(level);
+        let name = crate::llm_pool::active_name(&self.cfg);
+        if let Some(ep) = self.cfg.llm_pool.iter_mut().find(|e| e.name == name) {
+            ep.token_less = Some(level);
+        }
+        let _ = self.cfg.save();
         self.persist();
         self.status = format!("token less cost: {}", level.tag());
     }
@@ -2021,11 +2028,9 @@ impl HarnessApp {
             self.gauntlet_iter = 0;
             self.gauntlet_prev.clear();
         }
-        let token_less = self.session.meta.token_less.unwrap_or(self.cfg.token_less);
         if let Err(e) = client.user_message(
             &sid,
             &text,
-            Some(token_less),
             Some(self.session.meta.gauntlet),
             Some(self.effort()),
             Some(self.session.meta.goal.clone()),
@@ -2211,6 +2216,7 @@ impl HarnessApp {
                                 use_for_office: true,
                                 price_in: 0.0,
                                 price_out: 0.0,
+                                token_less: None,
                                 // meta.ai fala Responses API, não Chat Completions
                                 wire: if profile.trim() == "meta" {
                                     "responses".into()
@@ -2386,18 +2392,19 @@ impl HarnessApp {
             SlashAction::TokenLess(level) => {
                 let text = match level {
                     Some(l) => {
-                        self.session.meta.token_less = Some(l);
-                        self.persist();
+                        self.set_token_less(l);
                         format!(
-                            "token less cost: {} neste chat ({}). Só encurta a saída — entrada e \
-                             raciocínio seguem iguais.",
+                            "token less cost: {} on provider {} ({}). Output only — input and \
+                             reasoning are untouched.",
                             l.tag(),
+                            crate::llm_pool::active_name(&self.cfg),
                             l.label()
                         )
                     }
                     None => format!(
-                        "token less cost deste chat: {} (padrão global: {})\n\
-                         /tokenless off|lite|full|ultra",
+                        "token less on {}: {} (global default: {})\n\
+                         /tokenless off|lite|full|ultra — it lives on the provider now",
+                        crate::llm_pool::active_name(&self.cfg),
                         self.token_less_level().tag(),
                         self.cfg.token_less.tag()
                     ),
@@ -3007,6 +3014,7 @@ impl HarnessApp {
                 use_for_workers: false,
                 price_in: 0.0,
                 price_out: 0.0,
+                token_less: None,
                 wire: String::new(),
             };
             crate::llm_pool::upsert_endpoint(&mut self.cfg, ep);
@@ -4012,24 +4020,6 @@ impl HarnessApp {
                                     .clicked()
                                     {
                                         self.cycle_effort();
-                                    }
-                                    let tlc = self.token_less_level();
-                                    let chip_txt = if tlc.is_on() {
-                                        format!("token less: {}", tlc.tag())
-                                    } else {
-                                        "token less".to_string()
-                                    };
-                                    let tlc_chip = w::pill_toggle(ui, &chip_txt, tlc.is_on());
-                                    if tlc_chip
-                                        .on_hover_text(
-                                            "Token Less Cost — resposta comprimida neste chat. \
-                                             Clique para alternar off → lite → full → ultra \
-                                             (/tokenless).\n\
-                                             Encolhe só a saída; código e comandos ficam intactos.",
-                                        )
-                                        .clicked()
-                                    {
-                                        self.set_token_less(tlc.next());
                                     }
                                     let g_on = self.session.meta.gauntlet;
                                     if w::pill_toggle(ui, "gauntlet loop", g_on)
@@ -6895,6 +6885,7 @@ impl HarnessApp {
             .max(1);
         let mut fetch_idx: Option<usize> = None;
         let models = self.models_cache.clone();
+        let default_tlc = self.cfg.token_less;
         let mut use_name: Option<String> = None;
         let row_w = (ui.available_width() - 24.0).max(240.0);
         for (i, ep) in self.cfg.llm_pool.iter_mut().enumerate() {
@@ -7009,6 +7000,27 @@ impl HarnessApp {
                         );
                     });
                     ui.horizontal(|ui| {
+                        ui.label(crate::theme::meta("token less"));
+                        let cur = ep.token_less.unwrap_or(default_tlc);
+                        let sel = match cur {
+                            crate::tokenless::TokenLessLevel::Off => 0,
+                            crate::tokenless::TokenLessLevel::Lite => 1,
+                            crate::tokenless::TokenLessLevel::Full => 2,
+                            crate::tokenless::TokenLessLevel::Ultra => 3,
+                        };
+                        if let Some(i) =
+                            w::segmented(ui, &["off", "lite", "full", "ultra"], sel)
+                        {
+                            ep.token_less = Some(match i {
+                                0 => crate::tokenless::TokenLessLevel::Off,
+                                1 => crate::tokenless::TokenLessLevel::Lite,
+                                2 => crate::tokenless::TokenLessLevel::Full,
+                                _ => crate::tokenless::TokenLessLevel::Ultra,
+                            });
+                        }
+                        ui.label(crate::theme::meta("compresses this provider's answers"));
+                    });
+                    ui.horizontal(|ui| {
                         ui.label(crate::theme::meta("wire"));
                         let sel = match ep.wire.as_str() {
                             "chat" => 1,
@@ -7049,6 +7061,7 @@ impl HarnessApp {
                 use_for_workers: false,
                 price_in: 0.0,
                 price_out: 0.0,
+                token_less: None,
                 wire: String::new(),
             });
         }

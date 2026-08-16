@@ -36,6 +36,11 @@ pub struct LlmEndpoint {
     /// USD por 1M tokens de saída.
     #[serde(default)]
     pub price_out: f64,
+    /// Token Less Cost deste provedor. `None` = usa o padrão do config.
+    /// Vive aqui, não no chat: compressão é característica de quanto o
+    /// provedor cobra, não da conversa.
+    #[serde(default)]
+    pub token_less: Option<crate::tokenless::TokenLessLevel>,
     /// Protocolo do endpoint: "chat" (padrão) ou "responses".
     /// Vazio = deduzido do host, para não quebrar config já gravado.
     #[serde(default)]
@@ -101,6 +106,7 @@ impl LlmEndpoint {
             use_for_workers: false,
             price_in: 0.0,
             price_out: 0.0,
+            token_less: None,
             wire: String::new(),
         }
     }
@@ -279,6 +285,7 @@ fn seed_defaults(cfg: &mut Config) {
         cfg.llm_pool.push(LlmEndpoint {
             price_in,
             price_out,
+            token_less: None,
             wire: String::new(),
             name: name.into(),
             api_base: base.into(),
@@ -309,6 +316,7 @@ pub fn seed_meta(cfg: &mut Config) {
         price_in: 1.25,
         price_out: 4.25,
         // vazio = auto; wire_of deduz "responses" pelo host meta.ai
+        token_less: None,
         wire: String::new(),
         name: "meta".into(),
         api_base: "https://api.meta.ai/v1".into(),

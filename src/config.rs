@@ -141,7 +141,8 @@ pub struct Config {
     pub usage_pinned: bool,
     /// Token Less Cost: padrão para chats novos (cada chat pode sobrescrever).
     /// `alias` mantém legível o config.toml gravado quando isto se chamava caveman.
-    #[serde(default, alias = "caveman")]
+    /// Nível padrão do Token Less. Cada provedor pode sobrescrever.
+    #[serde(default = "default_token_less", alias = "caveman")]
     pub token_less: crate::tokenless::TokenLessLevel,
     #[serde(default = "default_history_cap")]
     pub history_cap: usize,
@@ -194,6 +195,9 @@ fn default_learn_min() -> u32 {
 }
 fn default_notify_after() -> u64 {
     60
+}
+fn default_token_less() -> crate::tokenless::TokenLessLevel {
+    crate::tokenless::TokenLessLevel::Ultra
 }
 fn default_effort() -> String {
     "medium".into()
@@ -275,7 +279,8 @@ impl Default for Config {
             get_it_done: false,
             gauntlet: false,
             gauntlet_max_iterations: default_gauntlet_max(),
-            token_less: crate::tokenless::TokenLessLevel::default(),
+            // padrão: sempre ligado no máximo; cada provedor pode baixar
+            token_less: crate::tokenless::TokenLessLevel::Ultra,
             history_cap: default_history_cap(),
             tool_result_cap: default_tool_result_cap(),
             auto_approve_safe: true,

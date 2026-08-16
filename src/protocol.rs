@@ -57,10 +57,6 @@ pub enum ClientMsg {
     UserMessage {
         session_id: String,
         text: String,
-        /// Nível do Token Less Cost ("off"/"lite"/"full"/"ultra").
-        /// Ausente = daemon mantém o que já sabia da sessão.
-        #[serde(default, alias = "caveman")]
-        token_less: Option<String>,
         /// Gauntlet Loop deste chat. Ausente = daemon mantém o que sabia.
         #[serde(default)]
         gauntlet: Option<bool>,

@@ -28,10 +28,6 @@ pub struct SessionMeta {
     /// Session id on the multi-client daemon (same as `id` when created via daemon).
     #[serde(default)]
     pub daemon_session_id: String,
-    /// Token Less Cost deste chat. `None` = segue o padrão do Config.
-    /// `alias`: sessões gravadas quando isto se chamava caveman seguem abrindo.
-    #[serde(default, alias = "caveman")]
-    pub token_less: Option<crate::tokenless::TokenLessLevel>,
     /// Favorito: vai para o topo da lista e não some no meio dos antigos.
     #[serde(default)]
     pub pinned: bool,
@@ -86,7 +82,6 @@ impl Session {
                 chat_dir: chat_dir_s.clone(),
                 chat_folder_name: folder_name.clone(),
                 daemon_session_id: id.clone(),
-                token_less: None,
                 pinned: false,
                 project_dir: None,
                 gauntlet: false,
@@ -131,7 +126,6 @@ impl Session {
                 chat_dir: chat_dir.clone(),
                 chat_folder_name: folder_name.clone(),
                 daemon_session_id: session_id,
-                token_less: None,
                 pinned: false,
                 project_dir: None,
                 gauntlet: false,
@@ -469,7 +463,6 @@ mod tests {
                 chat_dir: String::new(),
                 chat_folder_name: "20260804_153021".into(),
                 daemon_session_id: String::new(),
-                token_less: None,
                 pinned: false,
                 project_dir: None,
                 gauntlet: false,

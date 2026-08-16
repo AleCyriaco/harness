@@ -405,7 +405,6 @@ fn cli_attach_session(id_or_prefix: &str) -> Result<()> {
             &ClientMsg::UserMessage {
                 session_id: session_id.clone(),
                 text: line,
-                token_less: None,
                 gauntlet: None,
                 effort: None,
                 goal: None,
@@ -539,7 +538,6 @@ fn cli_run(prompt: &str, tcp: bool) -> Result<()> {
         &ClientMsg::UserMessage {
             session_id: session_id.clone(),
             text: prompt.into(),
-            token_less: None,
             gauntlet: None,
             effort: None,
             goal: None,
@@ -668,7 +666,6 @@ fn cli_connect_repl() -> Result<()> {
             &ClientMsg::UserMessage {
                 session_id: session_id.clone(),
                 text: line,
-                token_less: None,
                 gauntlet: None,
                 effort: None,
                 goal: None,
