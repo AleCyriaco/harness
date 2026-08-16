@@ -180,6 +180,8 @@ fn run_turn_inner(
     // prefixo estável = cache do provedor acerta. O volátil viaja colado na
     // última mensagem do usuário, que já era volátil de qualquer jeito.
     let mut volatile: Vec<String> = Vec::new();
+    // skills injetadas neste turno — se ele girar em falso, elas ficam marcadas
+    let mut active_skills: Vec<String> = Vec::new();
 
     // pre_turn hook
     if let Some(out) = crate::hooks::run_hook(&cfg.workspace, "pre_turn", &user_q) {
@@ -199,6 +201,15 @@ fn run_turn_inner(
                 "Matched skills (use skill_load if needed):\n{}",
                 crate::skills::format_skills(&skills)
             ));
+            // skill que já falhou antes ganha convite explícito para virar v2
+            if cfg.skill_revision {
+                for sk in &skills {
+                    if let Some(h) = crate::learn::revision_hint(&sk.name, &sk.body) {
+                        volatile.push(h);
+                    }
+                }
+            }
+            active_skills = skills.iter().map(|s| s.name.clone()).collect();
         }
     }
 
@@ -475,6 +486,30 @@ fn run_turn_inner(
             "hook post_turn: {}",
             out.chars().take(100).collect::<String>()
         )));
+    }
+
+    // Loop travado com skill ativa: registra a falha na própria skill. É
+    // determinístico e de graça; a reescrita fica para o agente, convidado no
+    // próximo turno por `revision_hint`.
+    if cfg.skill_revision && stuck_hit {
+        for name in &active_skills {
+            let Some(sk) = crate::skills::load_skill(&cfg.workspace, name) else {
+                continue;
+            };
+            let note = format!(
+                "{}: the turn looped (same tool, same args) while this skill was active",
+                chrono::Local::now().format("%Y-%m-%d")
+            );
+            if let Some(body) = crate::learn::append_failure(&sk.body, &note, 5) {
+                let mut next = sk.clone();
+                next.body = body;
+                if crate::skills::save_skill(&cfg.workspace, name, &next.to_markdown()).is_ok() {
+                    let _ = tx.send(AgentEvent::Status(format!(
+                        "noted a failure on skill {name}"
+                    )));
+                }
+            }
+        }
     }
 
     let _ = tx.send(AgentEvent::Done {

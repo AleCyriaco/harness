@@ -81,6 +81,9 @@ pub struct Config {
     /// Mínimo de tools de trabalho para um turno virar skill.
     #[serde(default = "default_learn_min")]
     pub learn_min_steps: u32,
+    /// Revisão de skill: marca falha na skill ativa e convida o agente a propor v2.
+    #[serde(default = "default_true")]
+    pub skill_revision: bool,
     /// Modelo do usuário: injeta o perfil no system prompt e deixa o agente atualizá-lo.
     #[serde(default = "default_true")]
     pub user_model: bool,
@@ -244,6 +247,7 @@ impl Default for Config {
             usage_pinned: false,
             learning_loop: true,
             learn_min_steps: default_learn_min(),
+            skill_revision: true,
             user_model: true,
             live_view: true,
             checkpoint: true,

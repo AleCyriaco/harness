@@ -7005,6 +7005,13 @@ impl HarnessApp {
             ui.label(crate::theme::meta("write/run steps in one turn"));
         });
         ui.checkbox(
+            &mut self.cfg.skill_revision,
+            "When a turn loops with a skill active, note the failure on that skill",
+        );
+        ui.label(crate::theme::meta(
+            "The note is free and versioned; the rewrite is the agent's job, invited next time.",
+        ));
+        ui.checkbox(
             &mut self.cfg.user_model,
             "Keep a user profile the agent updates and reads across sessions",
         );
