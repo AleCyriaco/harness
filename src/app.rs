@@ -5165,6 +5165,9 @@ impl HarnessApp {
         let colw = (rect.width() - margin * 2.0) / (cols - 1.0).max(1.0);
         let mut by_col: std::collections::HashMap<u8, Vec<usize>> = Default::default();
         for (i, n) in g.nodes.iter().enumerate() {
+            if n.kind == crate::live::Kind::Swarm {
+                continue; // vão num anel ao redor do agente, não na coluna
+            }
             by_col.entry(n.col).or_default().push(i);
         }
         let mut pos: std::collections::HashMap<String, egui::Pos2> = Default::default();
@@ -5180,8 +5183,33 @@ impl HarnessApp {
             }
         }
 
+        // workers do swarm: anel ao redor do agente (destaque próprio)
+        let swarm_ids: Vec<String> = g
+            .nodes
+            .iter()
+            .filter(|n| n.kind == crate::live::Kind::Swarm)
+            .map(|n| n.id.clone())
+            .collect();
+        let agent_c = pos.get("agent").copied().unwrap_or(rect.center());
+        let ring_r = 74.0f32;
+        let m = swarm_ids.len().max(1) as f32;
+        for (k, id) in swarm_ids.iter().enumerate() {
+            let ang = -std::f32::consts::FRAC_PI_2 + (k as f32) * std::f32::consts::TAU / m;
+            let d = agent_c + egui::vec2(ang.cos(), ang.sin()) * ring_r;
+            pos.insert(id.clone(), *self.live_pos.get(id).unwrap_or(&d));
+        }
+
         let painter = ui.painter_at(rect);
         let t = ui.input(|i| i.time) as f32;
+
+        // anel discreto marcando "aqui tem swarm"
+        if !swarm_ids.is_empty() {
+            painter.circle_stroke(
+                agent_c,
+                ring_r,
+                egui::Stroke::new(1.0, p.accent.gamma_multiply(0.28)),
+            );
+        }
 
         // arestas (antes dos nós, que cobrem as pontas)
         for e in &g.edges {
