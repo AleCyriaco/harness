@@ -1490,30 +1490,30 @@ impl HarnessApp {
                 let draft = std::mem::replace(&mut self.input, CONTINUE_MESSAGE.into());
                 self.send_user_message();
                 self.input = draft;
-                self.status = format!("gauntlet {}/{max} · running…", self.gauntlet_iter);
+                self.status = format!("loop {}/{max} · running…", self.gauntlet_iter);
             }
             Some(Stop::Done) => {
                 self.gauntlet_iter = 0;
-                self.status = "gauntlet loop: done".into();
+                self.status = "loop: done".into();
             }
             Some(Stop::Exhausted) => {
                 self.gauntlet_iter = 0;
-                self.status = format!("gauntlet loop: stopped at {max} iterations");
+                self.status = format!("loop: stopped at {max} iterations");
             }
             Some(Stop::Stuck) => {
                 self.gauntlet_iter = 0;
-                self.status = "gauntlet loop: stopped — the turn was looping".into();
+                self.status = "loop: stopped — the turn was going in circles".into();
             }
             Some(Stop::Repeating) => {
                 self.gauntlet_iter = 0;
                 self.messages.push(UiMessage {
                     role: "system".into(),
-                    text: "gauntlet loop stopped: the answer repeated the previous one — \
+                    text: "loop stopped: the answer repeated the previous one — \
                            the model was restarting instead of advancing. Say what is missing, \
                            or turn the pill off."
                         .into(),
                 });
-                self.status = "gauntlet loop: stopped — repeated answer".into();
+                self.status = "loop: stopped — repeated answer".into();
             }
         }
     }
@@ -1543,9 +1543,9 @@ impl HarnessApp {
         self.gauntlet_iter = 0;
         self.persist();
         self.status = if on {
-            format!("gauntlet loop on · max {}", self.cfg.gauntlet_max_iterations)
+            format!("loop on · max {}", self.cfg.gauntlet_max_iterations)
         } else {
-            "gauntlet loop off".into()
+            "loop off".into()
         };
     }
 
@@ -2862,7 +2862,7 @@ impl HarnessApp {
                 self.gauntlet_tick(&last_reply, turn_stuck);
             } else if turn_failed && self.session.meta.gauntlet && self.gauntlet_iter > 0 {
                 self.gauntlet_iter = 0;
-                self.status = "gauntlet loop: stopped — the turn failed".into();
+                self.status = "loop: stopped — the turn failed".into();
             }
         } else if self.busy || self.open_tabs.iter().any(|t| t.busy) {
             ctx.request_repaint_after(std::time::Duration::from_millis(33));
@@ -3636,7 +3636,7 @@ impl HarnessApp {
                     if self.session.meta.gauntlet {
                         ui.label(
                             egui::RichText::new(format!(
-                                "gauntlet {}/{}",
+                                "loop {}/{}",
                                 self.gauntlet_iter, self.cfg.gauntlet_max_iterations
                             ))
                             .monospace()
@@ -4022,9 +4022,14 @@ impl HarnessApp {
                                         self.cycle_effort();
                                     }
                                     let g_on = self.session.meta.gauntlet;
-                                    if w::pill_toggle(ui, "gauntlet loop", g_on)
+                                    if w::pill_toggle_icon(
+                                        ui,
+                                        "loop",
+                                        g_on,
+                                        Some(crate::ui::Glyph::Loop),
+                                    )
                                         .on_hover_text(format!(
-                                            "Gauntlet Loop — the agent splits the goal, \
+                                            "Loop — the agent splits the goal, \
                                              critiques each part and redoes what fails.\n\
                                              Auto-sends \"{}\" until the reply carries {} \
                                              or {} iterations are spent. Turning it off stops it.",
@@ -4037,7 +4042,12 @@ impl HarnessApp {
                                         self.set_gauntlet(!g_on);
                                     }
                                     let gid = self.session.meta.get_it_done;
-                                    if w::pill_toggle(ui, "get it done", gid)
+                                    if w::pill_toggle_icon(
+                                        ui,
+                                        "trust",
+                                        gid,
+                                        Some(crate::ui::Glyph::Unlock),
+                                    )
                                         .on_hover_text(
                                             "Runs to the end without stopping to ask. Approval is \
                                              granted by default while this is on — the guard still \
@@ -7270,7 +7280,7 @@ impl HarnessApp {
             ui.label(crate::theme::meta("identical calls in one turn"));
         });
         ui.horizontal(|ui| {
-            ui.label(crate::theme::meta("Gauntlet Loop ceiling"));
+            ui.label(crate::theme::meta("Loop ceiling"));
             let mut n = self.cfg.gauntlet_max_iterations;
             if ui.add(egui::DragValue::new(&mut n).range(1..=100)).changed() {
                 self.cfg.gauntlet_max_iterations = n;
@@ -7279,7 +7289,7 @@ impl HarnessApp {
         });
         ui.add_space(6.0);
         ui.label(crate::theme::meta(
-            "A looping turn also stops the Gauntlet Loop instead of burning what is left.",
+            "A looping turn also stops the loop instead of burning what is left.",
         ));
     }
 

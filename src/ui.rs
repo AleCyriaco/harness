@@ -20,6 +20,10 @@ pub enum Glyph {
     Nodes,
     /// pulso — painel de uso
     Pulse,
+    /// seta circular — repetir até terminar (loop)
+    Loop,
+    /// cadeado aberto — o portão de aprovação foi liberado (trust)
+    Unlock,
 }
 
 fn paint_glyph(painter: &egui::Painter, center: Pos2, g: Glyph, filled: bool, color: Color32) {
@@ -88,6 +92,58 @@ fn paint_glyph(painter: &egui::Painter, center: Pos2, g: Glyph, filled: bool, co
                 Pos2::new(center.x + half, y),
             ];
             painter.add(egui::Shape::line(pts, thin));
+        }
+        Glyph::Loop => {
+            // arco de ~300° + ponta de seta: "repete"
+            let rr = half - 0.6;
+            let mut pts = Vec::new();
+            let start = -0.35f32;
+            let sweep = std::f32::consts::TAU * 0.82;
+            let steps = 22;
+            for i in 0..=steps {
+                let a = start + sweep * (i as f32 / steps as f32);
+                pts.push(Pos2::new(center.x + a.cos() * rr, center.y + a.sin() * rr));
+            }
+            painter.add(egui::Shape::line(pts.clone(), stroke));
+            if let Some(tip) = pts.last() {
+                let a = start + sweep;
+                // seta tangente ao arco
+                let tx = -a.sin();
+                let ty = a.cos();
+                let back = Pos2::new(tip.x - tx * 3.4, tip.y - ty * 3.4);
+                let nx = a.cos();
+                let ny = a.sin();
+                painter.add(egui::Shape::convex_polygon(
+                    vec![
+                        *tip,
+                        Pos2::new(back.x + nx * 2.4, back.y + ny * 2.4),
+                        Pos2::new(back.x - nx * 2.4, back.y - ny * 2.4),
+                    ],
+                    color,
+                    Stroke::NONE,
+                ));
+            }
+        }
+        Glyph::Unlock => {
+            // corpo do cadeado
+            let body = Rect::from_center_size(
+                Pos2::new(center.x, center.y + half * 0.35),
+                Vec2::new(s * 0.78, s * 0.55),
+            );
+            if filled {
+                painter.rect_filled(body, CornerRadius::same(2), color);
+            } else {
+                painter.rect_stroke(body, CornerRadius::same(2), stroke, StrokeKind::Inside);
+            }
+            // haste aberta: arco que não fecha, deslocado para a direita
+            let hr = s * 0.28;
+            let hc = Pos2::new(center.x + hr * 0.55, body.top() - hr * 0.55);
+            let mut pts = Vec::new();
+            for i in 0..=14 {
+                let a = std::f32::consts::PI * (0.05 + 0.95 * (i as f32 / 14.0));
+                pts.push(Pos2::new(hc.x - a.cos() * hr, hc.y - a.sin() * hr));
+            }
+            painter.add(egui::Shape::line(pts, Stroke::new(1.5, color)));
         }
         Glyph::Globe => {
             painter.circle_stroke(center, half - 0.75, stroke);
@@ -207,15 +263,43 @@ pub fn chip(ui: &mut egui::Ui, text: &str) -> Response {
 /// `chip` que sabe estar ligado: acende em terracota quando `on`.
 /// Usada pelos toggles do composer (Token Less Cost, Gauntlet Loop).
 pub fn pill_toggle(ui: &mut egui::Ui, text: &str, on: bool) -> Response {
+    pill_toggle_icon(ui, text, on, None)
+}
+
+/// Pill com glifo desenhado à esquerda do texto. Desenhado, não fonte: a
+/// IBM Plex embutida não traz ↻ nem cadeado, e símbolo ausente vira tofu.
+pub fn pill_toggle_icon(
+    ui: &mut egui::Ui,
+    text: &str,
+    on: bool,
+    glyph: Option<Glyph>,
+) -> Response {
     let p = pal();
     let color = if on { p.accent } else { p.muted };
-    ui.add(
-        egui::Button::new(egui::RichText::new(text).monospace().size(11.5).color(color))
-            .fill(Color32::TRANSPARENT)
-            .stroke(Stroke::new(1.0, if on { p.accent } else { p.border_soft }))
-            .corner_radius(CornerRadius::same(7))
-            .min_size(Vec2::new(0.0, 24.0)),
+    let stroke = Stroke::new(1.0, if on { p.accent } else { p.border_soft });
+    let mut btn = egui::Button::new(
+        egui::RichText::new(if glyph.is_some() {
+            format!("   {text}")
+        } else {
+            text.to_string()
+        })
+        .monospace()
+        .size(11.5)
+        .color(color),
     )
+    .fill(Color32::TRANSPARENT)
+    .stroke(stroke)
+    .corner_radius(CornerRadius::same(7))
+    .min_size(Vec2::new(0.0, 24.0));
+    if glyph.is_some() {
+        btn = btn.min_size(Vec2::new(0.0, 24.0));
+    }
+    let resp = ui.add(btn);
+    if let Some(g) = glyph {
+        let c = Pos2::new(resp.rect.left() + 12.0, resp.rect.center().y);
+        paint_glyph(ui.painter(), c, g, false, color);
+    }
+    resp
 }
 
 /// Nó de um grafo desenhável (Graph, Mem, Live usam o mesmo).
