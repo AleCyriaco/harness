@@ -69,6 +69,9 @@ pub enum ClientMsg {
         /// "Get it done": aprova tudo que o guard permitir. Ausente = mantém.
         #[serde(default)]
         get_it_done: Option<bool>,
+        /// Caminhos de imagem anexados a esta mensagem.
+        #[serde(default)]
+        images: Vec<String>,
     },
     Cancel {
         session_id: String,

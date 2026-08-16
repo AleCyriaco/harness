@@ -321,6 +321,7 @@ Recent file events:
             tool_calls: None,
             tool_call_id: None,
             name: None,
+            images: Vec::new(),
         },
         ChatMessage {
             role: "user".into(),
@@ -328,6 +329,7 @@ Recent file events:
             tool_calls: None,
             tool_call_id: None,
             name: None,
+            images: Vec::new(),
         },
     ];
 
@@ -351,6 +353,7 @@ Recent file events:
                     tool_calls: Some(calls.clone()),
                     tool_call_id: None,
                     name: None,
+            images: Vec::new(),
                 });
                 for call in calls {
                     if cancel.load(Ordering::Relaxed) {
@@ -365,6 +368,7 @@ Recent file events:
                             tool_calls: None,
                             tool_call_id: Some(call.id),
                             name: Some(name_t),
+            images: Vec::new(),
                         });
                         continue;
                     }
@@ -395,6 +399,7 @@ Recent file events:
                         tool_calls: None,
                         tool_call_id: Some(call.id),
                         name: Some(name_t),
+            images: Vec::new(),
                     });
                 }
                 continue;

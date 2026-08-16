@@ -1,6 +1,7 @@
 mod agent;
 mod app;
 mod app_text;
+mod attach;
 mod bg;
 mod browser;
 mod tokenless;

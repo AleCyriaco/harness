@@ -42,6 +42,7 @@ pub fn import_path(path: &Path) -> Result<ImportedSession> {
             tool_calls: None,
             tool_call_id: None,
             name: None,
+            images: Vec::new(),
         }],
         note: "imported as single user blob".into(),
     })
@@ -83,6 +84,7 @@ fn import_claude_jsonl(raw: &str) -> Result<ImportedSession> {
             tool_calls: None,
             tool_call_id: None,
             name: None,
+            images: Vec::new(),
         });
         if messages.len() >= 200 {
             break;
@@ -118,6 +120,7 @@ fn import_generic_json(v: &serde_json::Value) -> Result<ImportedSession> {
             tool_calls: None,
             tool_call_id: None,
             name: None,
+            images: Vec::new(),
         });
     }
     if messages.is_empty() {

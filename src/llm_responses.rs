@@ -360,6 +360,7 @@ pub fn into_reply(acc: Acc) -> Result<LlmReply> {
             tool_calls: (!tool_calls.is_empty()).then_some(tool_calls),
             tool_call_id: None,
             name: None,
+            images: Vec::new(),
         },
     })
 }
@@ -508,6 +509,7 @@ mod tests {
                 tool_calls: None,
                 tool_call_id: None,
                 name: None,
+            images: Vec::new(),
             },
             crate::llm::ChatMessage {
                 role: "user".into(),
@@ -515,6 +517,7 @@ mod tests {
                 tool_calls: None,
                 tool_call_id: None,
                 name: None,
+            images: Vec::new(),
             },
         ];
         let body = build_body(&cfg, &messages, &tools, true);
@@ -544,6 +547,7 @@ mod tests {
             tool_calls: None,
             tool_call_id: None,
             name: None,
+            images: Vec::new(),
         }
     }
 

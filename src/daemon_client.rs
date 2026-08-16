@@ -272,6 +272,7 @@ impl DaemonGuiClient {
         effort: Option<String>,
         goal: Option<String>,
         get_it_done: Option<bool>,
+        images: Vec<String>,
     ) -> Result<()> {
         self.send(&ClientMsg::UserMessage {
             session_id: session_id.into(),
@@ -280,6 +281,7 @@ impl DaemonGuiClient {
             effort,
             goal,
             get_it_done,
+            images,
         })?;
         // wait Ok turn started (optional)
         let _ = wait_reply_filter(&self.incoming, &self.stash, |m| {

@@ -165,6 +165,7 @@ fn run_turn_inner(
         tool_calls: None,
         tool_call_id: None,
         name: None,
+            images: Vec::new(),
     };
     if history.first().map(|m| m.role == "system").unwrap_or(false) {
         history[0] = sys;
@@ -295,6 +296,7 @@ fn run_turn_inner(
                         tool_calls: None,
                         tool_call_id: None,
                         name: None,
+            images: Vec::new(),
                     },
                 );
             }
@@ -332,6 +334,7 @@ fn run_turn_inner(
                     tool_calls: Some(calls.clone()),
                     tool_call_id: None,
                     name: None,
+            images: Vec::new(),
                 });
 
                 for call in calls {
@@ -362,6 +365,7 @@ fn run_turn_inner(
                             tool_calls: None,
                             tool_call_id: Some(call.id),
                             name: Some(name),
+            images: Vec::new(),
                         });
                         continue;
                     }
@@ -385,6 +389,7 @@ fn run_turn_inner(
                             tool_calls: None,
                             tool_call_id: Some(call.id),
                             name: Some(name),
+            images: Vec::new(),
                         });
                         continue;
                     }
@@ -417,6 +422,7 @@ fn run_turn_inner(
                                     tool_calls: None,
                                     tool_call_id: Some(call.id),
                                     name: Some(name),
+            images: Vec::new(),
                                 });
                                 continue;
                             }
@@ -465,6 +471,7 @@ fn run_turn_inner(
                         tool_calls: None,
                         tool_call_id: Some(call.id),
                         name: Some(name),
+            images: Vec::new(),
                     });
                 }
                 continue;

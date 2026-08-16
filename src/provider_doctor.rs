@@ -202,6 +202,7 @@ pub fn run() -> Result<()> {
             tool_calls: None,
             tool_call_id: None,
             name: None,
+            images: Vec::new(),
         }];
         match llm::chat(&cfg, &msgs, &[], &std::sync::atomic::AtomicBool::new(false), None) {
             Ok(r) => println!(

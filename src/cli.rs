@@ -409,6 +409,7 @@ fn cli_attach_session(id_or_prefix: &str) -> Result<()> {
                 effort: None,
                 goal: None,
                 get_it_done: None,
+                images: Vec::new(),
             },
         )?;
         loop {
@@ -542,6 +543,7 @@ fn cli_run(prompt: &str, tcp: bool) -> Result<()> {
             effort: None,
             goal: None,
             get_it_done: None,
+            images: Vec::new(),
         },
     )?;
     loop {
@@ -670,6 +672,7 @@ fn cli_connect_repl() -> Result<()> {
                 effort: None,
                 goal: None,
                 get_it_done: None,
+                images: Vec::new(),
             },
         )?;
         // drain until done

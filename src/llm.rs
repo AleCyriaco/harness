@@ -12,6 +12,11 @@ use crate::modes::AppMode;
 pub struct ChatMessage {
     pub role: String,
     pub content: Option<String>,
+    /// Caminhos de imagem anexados à mensagem. Viram partes `image_url` na
+    /// hora de montar o corpo; ficam fora quando vazio para não mudar o
+    /// formato de quem nunca anexou nada.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub images: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<Vec<ToolCall>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -363,6 +368,7 @@ fn chat_stream(
             tool_calls,
             tool_call_id: None,
             name: None,
+            images: Vec::new(),
         },
     })
 }
@@ -429,12 +435,45 @@ fn completion_body(cfg: &Config, messages: &[ChatMessage], tools: &[Value], stre
     body
 }
 
+/// Mensagens com imagem viram `content: [ {type:text}, {type:image_url} ]`.
+/// Sem imagem, o formato antigo é preservado byte a byte.
+pub fn messages_with_images(messages: &[ChatMessage], max_bytes: usize) -> Vec<Value> {
+    messages
+        .iter()
+        .map(|m| {
+            let mut v = serde_json::to_value(m).unwrap_or(json!({}));
+            if m.images.is_empty() {
+                return v;
+            }
+            let mut parts = Vec::new();
+            if let Some(t) = &m.content {
+                if !t.is_empty() {
+                    parts.push(json!({"type": "text", "text": t}));
+                }
+            }
+            for p in &m.images {
+                if let Some(url) = crate::attach::data_url(std::path::Path::new(p), max_bytes) {
+                    parts.push(json!({"type": "image_url", "image_url": {"url": url}}));
+                }
+            }
+            if parts.len() > 1 {
+                v["content"] = Value::Array(parts);
+            }
+            if let Some(obj) = v.as_object_mut() {
+                obj.remove("images");
+            }
+            v
+        })
+        .collect()
+}
+
 fn completion_body_base(
     cfg: &Config,
     messages: &[ChatMessage],
     tools: &[Value],
     stream: bool,
 ) -> Value {
+    let messages = &messages_with_images(messages, 4 * 1024 * 1024);
     if tools.is_empty() {
         json!({
             "model": cfg.model,
@@ -629,4 +668,49 @@ pub type CancelFlag = Arc<AtomicBool>;
 
 pub fn new_cancel() -> CancelFlag {
     Arc::new(AtomicBool::new(false))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mensagem_sem_imagem_mantem_o_formato_antigo() {
+        let m = ChatMessage {
+            role: "user".into(),
+            content: Some("oi".into()),
+            tool_calls: None,
+            tool_call_id: None,
+            name: None,
+            images: Vec::new(),
+        };
+        let v = messages_with_images(&[m], 1024);
+        assert_eq!(v[0]["content"], "oi", "string, não array");
+        assert!(v[0].get("images").is_none(), "campo interno não vaza");
+    }
+
+    #[test]
+    fn mensagem_com_imagem_vira_partes() {
+        let dir = std::env::temp_dir().join(format!("harness_img_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let img = dir.join("s.png");
+        std::fs::write(&img, b"foobar").unwrap();
+        let m = ChatMessage {
+            role: "user".into(),
+            content: Some("o que tem aqui?".into()),
+            tool_calls: None,
+            tool_call_id: None,
+            name: None,
+            images: vec![img.display().to_string()],
+        };
+        let v = messages_with_images(&[m], 1024);
+        let parts = v[0]["content"].as_array().expect("virou array");
+        assert_eq!(parts[0]["type"], "text");
+        assert_eq!(parts[1]["type"], "image_url");
+        assert!(parts[1]["image_url"]["url"]
+            .as_str()
+            .unwrap()
+            .starts_with("data:image/png;base64,"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
 }

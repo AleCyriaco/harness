@@ -422,6 +422,8 @@ pub struct HarnessApp {
     live_sel: Option<String>,
     /// Filtro do painel FILES.
     files_filter: String,
+    /// Anexos da próxima mensagem (imagens e arquivos soltos/colados).
+    attachments: Vec<PathBuf>,
     /// Modelos listados por endpoint (nome do endpoint → ids). Preenchido sob
     /// demanda: o provedor cobra nada por `/models`, mas é ida à rede.
     models_cache: std::collections::HashMap<String, Vec<String>>,
@@ -558,6 +560,7 @@ impl HarnessApp {
             live_pos: std::collections::HashMap::new(),
             live_sel: None,
             files_filter: String::new(),
+            attachments: Vec::new(),
             models_cache: Default::default(),
             gpos: Default::default(),
             gsel: None,
@@ -1876,6 +1879,7 @@ impl HarnessApp {
                 tool_calls: None,
                 tool_call_id: None,
                 name: None,
+            images: Vec::new(),
             });
             self.messages.push(UiMessage {
                 role: role.into(),
@@ -1939,9 +1943,30 @@ impl HarnessApp {
     }
 
     fn send_user_message(&mut self) {
-        let text = self.input.trim().to_string();
-        if text.is_empty() {
+        let mut text = self.input.trim().to_string();
+        // arquivo não-imagem entra como caminho: o agente lê com read_file
+        let (imgs, files): (Vec<PathBuf>, Vec<PathBuf>) = self
+            .attachments
+            .iter()
+            .cloned()
+            .partition(|p| crate::attach::is_image(p));
+        if !files.is_empty() {
+            let list = files
+                .iter()
+                .map(|p| p.display().to_string())
+                .collect::<Vec<_>>()
+                .join("\n");
+            text = if text.is_empty() {
+                list
+            } else {
+                format!("{text}\n\nattached files:\n{list}")
+            };
+        }
+        if text.is_empty() && imgs.is_empty() {
             return;
+        }
+        if text.is_empty() {
+            text = "what do you see in this image?".into();
         }
         if self.cfg.needs_workspace() {
             self.show_setup = true;
@@ -2022,6 +2047,7 @@ impl HarnessApp {
             tool_calls: None,
             tool_call_id: None,
             name: None,
+            images: imgs.iter().map(|p| p.display().to_string()).collect(),
         });
 
         if text != crate::gauntlet::CONTINUE_MESSAGE {
@@ -2035,10 +2061,12 @@ impl HarnessApp {
             Some(self.effort()),
             Some(self.session.meta.goal.clone()),
             Some(self.session.meta.get_it_done),
+            imgs.iter().map(|p| p.display().to_string()).collect(),
         ) {
             self.push_error(format!("daemon send: {e}"));
             return;
         }
+        self.attachments.clear();
         self.busy = true;
         self.turn_started = Some(std::time::Instant::now());
         self.turn_tools.clear();
@@ -2779,6 +2807,7 @@ impl HarnessApp {
                     tool_calls: None,
                     tool_call_id: None,
                     name: None,
+            images: Vec::new(),
                 });
             }
             if self.messages.len() > 220 {
@@ -2940,6 +2969,7 @@ impl HarnessApp {
                         tool_calls: None,
                         tool_call_id: None,
                         name: None,
+            images: Vec::new(),
                     });
                 }
                 tab.session.messages = tab.llm_history.clone();
@@ -3121,6 +3151,49 @@ impl HarnessApp {
         self.cfg.theme = self.cfg.theme.toggled();
         crate::theme::set_mode(ctx, self.cfg.theme);
         let _ = self.cfg.save();
+    }
+
+    /// Arquivo solto na janela e imagem colada viram anexo. Texto colado
+    /// continua indo para o campo, como sempre.
+    fn handle_drop_and_paste(&mut self, ctx: &egui::Context) {
+        let dropped: Vec<PathBuf> = ctx.input(|i| {
+            i.raw
+                .dropped_files
+                .iter()
+                .filter_map(|f| f.path.clone())
+                .collect()
+        });
+        for path in dropped {
+            self.attach_path(path);
+        }
+        // ⌘V com imagem no clipboard: egui só entrega texto, então perguntamos
+        // ao sistema. Sem imagem, o paste segue o caminho normal do texto.
+        let paste = ctx.input(|i| {
+            i.events.iter().any(|e| matches!(e, egui::Event::Paste(_)))
+                || (i.modifiers.command && i.key_pressed(egui::Key::V))
+        });
+        if paste {
+            let dir = self.session.chat_path().join("pasted");
+            if let Some(p) = crate::attach::clipboard_image_to(&dir) {
+                self.attach_path(p);
+            }
+        }
+    }
+
+    fn attach_path(&mut self, path: PathBuf) {
+        if self.attachments.contains(&path) {
+            return;
+        }
+        let name = path
+            .file_name()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        self.status = if crate::attach::is_image(&path) {
+            format!("image attached: {name}")
+        } else {
+            format!("file attached: {name}")
+        };
+        self.attachments.push(path);
     }
 
     fn handle_shortcuts(&mut self, ctx: &egui::Context) {
@@ -3886,6 +3959,33 @@ impl HarnessApp {
                                 ui.set_max_width(inner_w);
                                 ui.set_min_width(inner_w);
 
+                                // anexos desta mensagem, removíveis
+                                if !self.attachments.is_empty() {
+                                    let mut drop_at: Option<usize> = None;
+                                    ui.horizontal_wrapped(|ui| {
+                                        for (i, a) in self.attachments.iter().enumerate() {
+                                            let name = a
+                                                .file_name()
+                                                .map(|s| s.to_string_lossy().into_owned())
+                                                .unwrap_or_default();
+                                            let tag = if crate::attach::is_image(a) {
+                                                format!("image · {}", one_line(&name, 22))
+                                            } else {
+                                                format!("file · {}", one_line(&name, 22))
+                                            };
+                                            if w::pill_toggle(ui, &format!("{tag}  ×"), true)
+                                                .on_hover_text(a.display().to_string())
+                                                .clicked()
+                                            {
+                                                drop_at = Some(i);
+                                            }
+                                        }
+                                    });
+                                    if let Some(i) = drop_at {
+                                        self.attachments.remove(i);
+                                    }
+                                    ui.add_space(4.0);
+                                }
                                 ui.add(
                                     egui::TextEdit::multiline(&mut self.input)
                                         .desired_rows(2)
@@ -4064,16 +4164,14 @@ impl HarnessApp {
                                         };
                                     }
                                     if w::chip(ui, "+ file")
-                                        .on_hover_text("Attach a file path to the message")
+                                        .on_hover_text(
+                                            "Attach a file or image — you can also drop it on the \
+                                             window or paste an image with ⌘V",
+                                        )
                                         .clicked()
                                     {
                                         if let Some(f) = rfd::FileDialog::new().pick_file() {
-                                            if !self.input.is_empty()
-                                                && !self.input.ends_with(' ')
-                                            {
-                                                self.input.push(' ');
-                                            }
-                                            self.input.push_str(&f.display().to_string());
+                                            self.attach_path(f);
                                         }
                                     }
 
@@ -6474,6 +6572,7 @@ impl eframe::App for HarnessApp {
             ));
         }
 
+        self.handle_drop_and_paste(ctx);
         self.handle_shortcuts(ctx);
 
         self.rail(ctx);

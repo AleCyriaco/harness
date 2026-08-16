@@ -484,6 +484,7 @@ fn handle_msg(
             effort,
             goal,
             get_it_done,
+            images,
         } => {
             if gauntlet.is_some()
                 || effort.is_some()
@@ -506,7 +507,7 @@ fn handle_msg(
                     }
                 }
             }
-            start_turn(state, &session_id, text, out_tx)?;
+            start_turn_with(state, &session_id, text, images, out_tx)?;
         }
         ClientMsg::Schedule {
             session_id,
@@ -957,6 +958,16 @@ fn start_turn(
     text: String,
     out_tx: &Sender<ServerMsg>,
 ) -> Result<()> {
+    start_turn_with(state, session_id, text, Vec::new(), out_tx)
+}
+
+fn start_turn_with(
+    state: &Arc<Mutex<DaemonState>>,
+    session_id: &str,
+    text: String,
+    images: Vec<String>,
+    out_tx: &Sender<ServerMsg>,
+) -> Result<()> {
     let (cfg, mode, history, guard_writes) = {
         let mut g = state.lock().unwrap();
         let cfg_base = g.cfg.clone();
@@ -975,6 +986,7 @@ fn start_turn(
             tool_calls: None,
             tool_call_id: None,
             name: None,
+            images: images.clone(),
         });
         let mut cfg = cfg_base;
         // Projeto apontado manda; sem ele o agente fica na pasta do chat.
@@ -1038,6 +1050,7 @@ fn start_turn(
                             tool_calls: None,
                             tool_call_id: None,
                             name: None,
+            images: Vec::new(),
                         });
                         s.session.messages = s.history.clone();
                         s.busy = false;

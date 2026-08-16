@@ -541,6 +541,7 @@ mod tests {
             tool_calls: None,
             tool_call_id: None,
             name: None,
+            images: Vec::new(),
         });
         assert!(has_content(&so_historico));
     }
